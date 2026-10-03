@@ -1,0 +1,392 @@
+:root {
+  --bg: #11131a;
+  --panel: #191c26;
+  --panel2: #21252f;
+  --line: #2c3140;
+  --fg: #e8eaf0;
+  --dim: #9aa3b5;
+  --accent: #7c5cff;
+  --ok: #35c46a;
+  --warn: #e0a33a;
+  --bad: #e05c5c;
+  --r: 12px;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+/* The UA sheet's `[hidden] { display: none }` loses to ANY author rule that
+   sets `display` on the same element - .lightbox is `display: flex`, so the
+   lightbox painted over the whole app while still being "hidden". The
+   !important is what makes this beat a later, equally specific rule; keep it. */
+[hidden] { display: none !important; }
+
+html, body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overscroll-behavior-y: contain;
+}
+
+body {
+  padding-bottom: calc(64px + env(safe-area-inset-bottom));
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+/* ---------------------------------------------------------------- topbar */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 10px 14px;
+  background: rgba(17, 19, 26, .92);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--line);
+}
+.brand { font-weight: 700; letter-spacing: .3px; }
+.health {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--panel); color: var(--dim);
+  border: 1px solid var(--line); border-radius: 999px;
+  padding: 5px 11px; font-size: 12px; font-family: inherit;
+}
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+.dot.ok { background: var(--ok); }
+.dot.warn { background: var(--warn); }
+.dot.bad { background: var(--bad); }
+
+/* ------------------------------------------------------------------ tabs */
+main { padding: 14px; }
+.tab { display: none; }
+.tab.active { display: block; }
+
+.tabs {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 20;
+  display: flex; max-width: 720px; margin: 0 auto;
+  background: rgba(17, 19, 26, .96);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--line);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabbtn {
+  flex: 1; padding: 13px 4px; border: 0; background: none;
+  color: var(--dim); font: 600 13px/1 system-ui, sans-serif; cursor: pointer;
+  border-top: 2px solid transparent;
+}
+.tabbtn.active { color: var(--fg); border-top-color: var(--accent); }
+
+/* ----------------------------------------------------------------- cards */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r);
+  padding: 12px;
+  margin-bottom: 12px;
+}
+.card-hd {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 12px; font-weight: 700; text-transform: uppercase;
+  letter-spacing: .08em; color: var(--dim);
+  margin-bottom: 10px;
+}
+.sticky-hd { padding: 4px 2px 10px; }
+
+.pill {
+  background: var(--panel2); border: 1px solid var(--line);
+  border-radius: 999px; padding: 2px 9px; font-size: 11px;
+  letter-spacing: 0; text-transform: none;
+}
+
+/* ---------------------------------------------------------------- fields */
+.field { display: block; margin-bottom: 12px; }
+.field:last-child { margin-bottom: 0; }
+.field.inline { display: grid; grid-template-columns: 1fr 120px; align-items: center; gap: 10px; margin-top: 12px; }
+.lbl { display: block; font-size: 12px; color: var(--dim); margin-bottom: 5px; }
+.field.inline .lbl { margin: 0; }
+
+input[type=text], input[type=number], textarea, select {
+  width: 100%; padding: 10px 11px;
+  background: var(--panel2); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 10px;
+  font: inherit; font-size: 16px; /* stops iOS zoom-on-focus */
+}
+/* resize:none because app.js sizes the box to the prompt (see autoGrow). The
+   height cap stops a wall of text from eating the whole screen on a phone. */
+textarea { resize: none; min-height: 76px; max-height: 55vh; line-height: 1.4; overflow-y: auto; }
+input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+.row2 { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+.row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+
+/* --------------------------------------------------------------- switches */
+.switch { display: flex; align-items: flex-start; gap: 11px; padding: 8px 0; cursor: pointer; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch > span {
+  flex: none; width: 42px; height: 25px; border-radius: 999px;
+  background: var(--panel2); border: 1px solid var(--line);
+  position: relative; transition: background .15s;
+  margin-top: 1px;
+}
+.switch > span::after {
+  content: ''; position: absolute; top: 3px; left: 3px;
+  width: 17px; height: 17px; border-radius: 50%;
+  background: var(--dim); transition: transform .15s, background .15s;
+}
+.switch input:checked + span { background: var(--accent); border-color: var(--accent); }
+.switch input:checked + span::after { transform: translateX(17px); background: #fff; }
+.switch input:disabled + span { opacity: .4; }
+.switch b { display: block; font-weight: 600; font-size: 14px; }
+.switch i { display: block; font-style: normal; font-size: 11.5px; color: var(--dim); margin-top: 1px; }
+
+/* --------------------------------------------------------------- buttons */
+.btn {
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel2); color: var(--fg);
+  padding: 10px 14px; font: 600 14px/1 system-ui, sans-serif; cursor: pointer;
+}
+.btn:active { transform: translateY(1px); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.big { width: 100%; padding: 15px; font-size: 16px; }
+.btn.sm { padding: 7px 11px; font-size: 12.5px; }
+.btn.ghost { background: transparent; }
+.btn.danger { color: var(--bad); border-color: #4a2b2b; }
+.btn[disabled] { opacity: .5; }
+.btnrow { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.btnrow .btn { margin: 0; }
+label.btn { display: inline-block; }
+
+/* ----------------------------------------------------------------- slots */
+.slots { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.slot {
+  aspect-ratio: 1; border-radius: 10px; overflow: hidden; position: relative;
+  border: 1px dashed var(--line); background: var(--panel2);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--dim); font-size: 11px; cursor: pointer;
+}
+.slot.filled { border-style: solid; }
+.slot img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.slot .n {
+  position: absolute; top: 3px; left: 5px; font-size: 10px;
+  color: #fff; text-shadow: 0 1px 3px #000; font-weight: 700;
+}
+.slot .x {
+  position: absolute; top: 2px; right: 2px; width: 20px; height: 20px;
+  border-radius: 50%; border: 0; background: rgba(0, 0, 0, .62); color: #fff;
+  font-size: 13px; line-height: 20px; padding: 0; cursor: pointer;
+}
+
+/* ------------------------------------------------------------------ misc */
+.note { font-size: 12px; color: var(--dim); margin: 6px 0 0; }
+.note.top { margin: 0 0 10px; }
+
+/* -------------------------------------------------------------- history */
+.hrow {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+}
+.hrow.tap { cursor: pointer; }
+.hrow.tap:active { background: var(--panel2); }
+.hrow-top { display: flex; gap: 8px; align-items: flex-start; }
+.hrow-prompt { flex: 1; color: var(--fg); font-size: 13px; line-height: 1.35; word-break: break-word; }
+.hrow-x {
+  flex: none; background: none; border: 0; color: var(--dim);
+  font-size: 17px; line-height: 1; padding: 2px 4px; cursor: pointer;
+}
+.hrow-x:hover { color: #e5646a; }
+.hrow-meta { font-size: 11px; color: var(--dim); margin-top: 5px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.chip {
+  font-size: 10px; letter-spacing: .02em; padding: 2px 7px;
+  border-radius: 999px; background: var(--panel2); color: var(--dim);
+  border: 1px solid var(--line);
+}
+.chip.on { color: var(--fg); border-color: var(--accent); }
+.hrow-slots { display: flex; gap: 6px; margin-top: 8px; }
+.hrow-slots img {
+  width: 40px; height: 40px; object-fit: cover;
+  border-radius: 7px; border: 1px solid var(--line); background: var(--panel2);
+}
+.hrow-slots .gone {
+  width: 40px; height: 40px; border-radius: 7px; border: 1px dashed var(--line);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; color: var(--dim);
+}
+.note code { background: var(--panel2); padding: 1px 5px; border-radius: 5px; font-size: 11px; }
+.err {
+  background: #3a1f22; border: 1px solid #5a2b30; color: #ffb3b3;
+  padding: 10px 12px; border-radius: 10px; font-size: 13px; margin: 10px 0;
+}
+
+.bar { height: 7px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin: 4px 0 8px; }
+.bar-fill {
+  height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #b78bff);
+  transition: width .25s ease;
+}
+.status { text-transform: none; letter-spacing: 0; font-size: 13px; }
+.status.queued { color: var(--dim); }
+.status.running { color: var(--accent); }
+.status.done { color: var(--ok); }
+.status.error, .status.cancelled { color: var(--bad); }
+
+/* ----------------------------------------------------------------- queue */
+/* Every job the server still owes us, so a second Generate press is visibly
+   "queued behind the first" instead of looking like it did nothing. */
+.queuebar { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.qrow {
+  display: flex; align-items: center; gap: 8px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: 10px; padding: 8px 10px; font-size: 13px;
+}
+.qrow.running { border-color: var(--accent); }
+.qrow.finished { opacity: .72; }
+.qtext { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qrow.finished .qtext { cursor: pointer; }
+.qmeta { color: var(--dim); font-size: 11.5px; white-space: nowrap; }
+.qx {
+  background: none; border: 0; color: var(--dim);
+  font-size: 17px; line-height: 1; cursor: pointer; padding: 2px 4px;
+}
+.qx:hover { color: var(--bad); }
+.qbar { height: 4px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin-top: 6px; }
+.qbar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s ease; }
+
+.runs { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12.5px; }
+.runs li {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 5px 0; border-top: 1px solid var(--line); color: var(--dim);
+}
+.runs li b { color: var(--fg); font-weight: 600; min-width: 62px; }
+.runs li.err { color: #ff9c9c; }
+
+.thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.thumbs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
+
+/* --------------------------------------------------------------- gallery */
+.groups { display: flex; flex-direction: column; gap: 16px; }
+.group { }
+.group-hd {
+  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  font-size: 12px; color: var(--dim); margin-bottom: 8px;
+}
+.group-hd b { color: var(--fg); font-size: 13px; font-weight: 600; display: block; }
+/* The job header is itself the fold control, so it is a real button - wide hit
+   target, keyboard reachable, and no chevron to squeeze onto a 360px screen. */
+.group-hd { margin-bottom: 8px; }
+.group.collapsed .group-hd { margin-bottom: 0; }
+.group.collapsed .grid { display: none; }
+.g-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  background: none; border: 0; padding: 6px 0; margin: 0;
+  color: var(--dim); font: inherit; font-size: 12px; line-height: 1.4;
+  text-align: left; cursor: pointer;
+}
+.g-label { flex: 1; min-width: 0; }
+.g-chev { flex: none; color: var(--fg); font-weight: 600; white-space: nowrap; }
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.cell { position: relative; border-radius: 10px; overflow: hidden; background: var(--panel2); border: 1px solid var(--line); }
+.cell img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: zoom-in; }
+.cell .acts {
+  position: absolute; left: 0; right: 0; bottom: 0;
+  display: flex; gap: 4px; padding: 4px;
+  background: linear-gradient(transparent, rgba(0, 0, 0, .8));
+  opacity: 0; transition: opacity .12s;
+}
+.cell:active .acts, .cell:hover .acts { opacity: 1; }
+.cell .acts button {
+  flex: 1; border: 0; border-radius: 7px; padding: 6px 2px;
+  background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; cursor: pointer;
+}
+
+/* -------------------------------------------------------------- bindings */
+.bindings { display: flex; flex-direction: column; gap: 8px; }
+.bind {
+  display: grid; grid-template-columns: 1fr 78px 1fr; gap: 7px; align-items: center;
+}
+.bind label { font-size: 11.5px; color: var(--dim); }
+.bind input { padding: 7px 9px; font-size: 14px; }
+.bind .ok { color: var(--ok); font-size: 11px; }
+.bind .no { color: var(--bad); font-size: 11px; }
+.bind.bad input { border-color: var(--bad); }
+.bind-title { grid-column: 1 / -1; font-size: 11px; color: var(--dim); margin-top: -3px; }
+.bind-title b { color: var(--fg); font-weight: 500; }
+
+.nodelist { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12px; max-height: 260px; overflow: auto; }
+.nodelist li { display: flex; gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--line); }
+.nodelist li span:first-child { color: var(--accent); min-width: 30px; }
+.nodelist li span:last-child { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* -------------------------------------------------------------- lightbox */
+.lightbox {
+  position: fixed; inset: 0; z-index: 40;
+  background: rgba(8, 9, 13, .97);
+  display: grid;
+  /* One column: the pager lives in the bottom bar, so the image gets the whole
+     width instead of losing 104px to two 52px gutters. */
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr auto;
+  gap: 0;
+}
+.lb-stage {
+  grid-column: 1; grid-row: 1;
+  /* The img is stretched to this box, so at scale() > 1 it paints past it and
+     swallows taps meant for the bar. Clipping here contains both the pixels and
+     the hit region - raising z-index alone would still let a fling near the
+     bottom edge reach under the bar. */
+  overflow: visible;
+  position: relative;
+}
+.lightbox img {
+  width: 100%; height: 100%;
+  object-fit: contain;
+  border-radius: 8px;
+  /* Pointer events drive the zoom/pan below; the browser must not also try to
+     scroll or pinch-zoom the page while the image is being manipulated. */
+  touch-action: none;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  -webkit-user-drag: none;
+  transition: transform .12s ease-out;
+}
+/* While a finger is down, easing the transform makes the image lag the hand. */
+.lightbox img.dragging { transition: none; }
+.lb-bar {
+  grid-column: 1; grid-row: 2;
+  position: relative; z-index: 2;
+  background: rgba(17, 19, 26, .66);
+  border-top: 1px solid var(--line);
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+}
+.lb-step { display: flex; align-items: center; gap: 5px; margin-right: auto; }
+/* The image's own filename, pinned to the top so you know which download this
+   is. pointer-events:none is load-bearing - it sits over the picture, and a
+   drag or pinch starting on the label must still reach the image. */
+.lb-name {
+  position: absolute; z-index: 3;
+  top: calc(6px + env(safe-area-inset-top)); left: 50%;
+  transform: translateX(-50%);
+  max-width: 92vw; padding: 4px 11px; border-radius: 999px;
+  background: rgba(8, 9, 13, .72);
+  color: var(--fg); font-size: 12px; line-height: 1.4;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  pointer-events: none;
+}
+/* Wide enough to hit with a thumb without the glyph looking lost. */
+.lb-arrow { min-width: 42px; font-size: 17px; line-height: 1; padding: 7px 8px; }
+.lb-count { color: var(--dim); font-size: 12px; white-space: nowrap; min-width: 52px; text-align: center; }
+.lb-zoom { display: flex; gap: 4px; }
+
+.toast {
+  position: fixed; left: 50%; bottom: calc(78px + env(safe-area-inset-bottom));
+  transform: translateX(-50%); z-index: 50;
+  background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
+  padding: 10px 16px; border-radius: 999px; font-size: 13px;
+  max-width: 88vw; text-align: center;
+}
+
+@media (min-width: 560px) {
+  .grid { grid-template-columns: repeat(4, 1fr); }
+}

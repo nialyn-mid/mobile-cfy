@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#11131a">
+<title>mobile-cfy</title>
+<link rel="stylesheet" href="/style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='14' font-size='14'>🎨</text></svg>">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">mobile-cfy</div>
+  <button id="healthBtn" class="health" type="button" title="ComfyUI status">
+    <span id="healthDot" class="dot"></span><span id="healthText">checking…</span>
+  </button>
+</header>
+
+<main>
+
+<!-- ───────────────────────────── GENERATE ───────────────────────────── -->
+<section id="tab-generate" class="tab active">
+
+  <label class="field">
+    <span class="lbl">Prompt</span>
+    <textarea id="prompt" rows="4" placeholder="write prompt here" autofocus></textarea>
+  </label>
+
+  <div class="card">
+    <div class="card-hd">Toggles</div>
+    <label class="switch"><input type="checkbox" id="enhance" checked><span></span>
+      <div><b>Prompt enhance</b><i id="enhanceHint">runs the Qwen-VL enhancer</i></div>
+    </label>
+    <label class="switch"><input type="checkbox" id="turbo"><span></span>
+      <div><b>Turbo model</b><i>qwen_image_2.1_turbo_Q4_K_M.gguf</i></div>
+    </label>
+    <label class="switch"><input type="checkbox" id="collect" checked><span></span>
+      <div><b>Save images</b><i>download to the configured folder</i></div>
+    </label>
+    <label class="field inline">
+      <span class="lbl">Steps override</span>
+      <input type="number" id="steps" min="1" step="1" inputmode="numeric" placeholder="default">
+    </label>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">Run</div>
+    <div class="row3">
+      <label class="field"><span class="lbl">Megapixels</span>
+        <input type="number" id="megapixels" value="4" min="0.1" step="0.1" inputmode="decimal"></label>
+      <label class="field"><span class="lbl">Batch</span>
+        <input type="number" id="batch" value="1" min="1" step="1" inputmode="numeric"></label>
+      <label class="field"><span class="lbl">Shuffle</span>
+        <input type="number" id="shuffle" value="1" min="1" step="1" inputmode="numeric"></label>
+    </div>
+    <label class="field"><span class="lbl">Prompt refresh
+      <a href="#" id="helpRefresh" class="hint">?</a></span>
+      <select id="refresh">
+        <option value="firstOfGroup">Once per shuffle group (faster)</option>
+        <option value="everyRun">Every run (each image re-enhanced)</option>
+      </select></label>
+    <p class="note" id="runMath"></p>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">
+      Reference images
+      <span class="pill" id="slotPill">0 / 4</span>
+    </div>
+    <p class="note">Reference mode switches on automatically when an image is attached, and the prompt then bypasses the enhancer.</p>
+    <div id="slots" class="slots"></div>
+    <div class="btnrow">
+      <button class="btn ghost sm" id="fillFromGallery" type="button">⤓ last 4 from gallery</button>
+      <button class="btn ghost sm" id="clearSlots" type="button">clear</button>
+    </div>
+  </div>
+
+  <button id="generate" class="btn primary big" type="button">Generate</button>
+  <p class="note" id="queueHint" hidden></p>
+  <div id="queueList" class="queuebar" hidden></div>
+  <p class="err" id="genErr" hidden></p>
+
+  <div id="jobPanel" class="card" hidden>
+    <div class="card-hd">
+      <span id="jobStatus" class="status">…</span>
+      <button id="cancelJob" class="btn ghost sm" type="button">cancel</button>
+    </div>
+    <div class="bar"><div id="jobBar" class="bar-fill"></div></div>
+    <p class="note" id="jobLine"></p>
+    <ul id="runList" class="runs"></ul>
+    <div id="jobThumbs" class="thumbs"></div>
+  </div>
+</section>
+
+<!-- ───────────────────────────── GALLERY ───────────────────────────── -->
+<section id="tab-gallery" class="tab">
+  <div class="card-hd sticky-hd">
+    <span>Gallery</span>
+    <span class="btnrow">
+      <button id="reloadGallery" class="btn ghost sm" type="button">refresh</button>
+      <button id="clearGallery" class="btn ghost sm danger" type="button">clear index</button>
+    </span>
+  </div>
+  <div id="galleryList" class="groups"></div>
+</section>
+
+<!-- ────────────────────────────── HISTORY ────────────────────────────── -->
+<section id="tab-history" class="tab">
+  <div class="card-hd sticky-hd">
+    <span>History</span>
+    <span class="btnrow">
+      <button id="reloadHistory" class="btn ghost sm" type="button">refresh</button>
+      <button id="clearHistory" class="btn ghost sm danger" type="button">clear</button>
+    </span>
+  </div>
+  <p class="note top">Every prompt you submit is kept here. Tap one to load the prompt, its reference images and all its settings back into the Generate tab.</p>
+  <div id="historyList" class="groups"></div>
+</section>
+
+<!-- ───────────────────────────── SETTINGS ───────────────────────────── -->
+<section id="tab-settings" class="tab">
+
+  <div class="card">
+    <div class="card-hd">Server</div>
+    <div class="row2">
+      <label class="field"><span class="lbl">ComfyUI host</span><input id="cfgHost" type="text" inputmode="url"></label>
+      <label class="field"><span class="lbl">Port</span><input id="cfgPort" type="number" inputmode="numeric"></label>
+    </div>
+    <label class="field"><span class="lbl">Download folder</span><input id="cfgDl" type="text"></label>
+    <div class="btnrow">
+      <button id="checkPath" class="btn ghost sm" type="button">test folder</button>
+      <span id="pathResult" class="note"></span>
+    </div>
+    <label class="field"><span class="lbl">Filename template</span><input id="cfgTpl" type="text"></label>
+    <p class="note">Tokens: {stamp} {prompt} {variant} {seed} {index} {node} {group}</p>
+    <label class="field"><span class="lbl">Collect from nodes (comma separated, blank = all)</span><input id="cfgNodes" type="text"></label>
+    <div class="btnrow">
+      <button id="saveConfig" class="btn primary sm" type="button">Save</button>
+      <span id="cfgMsg" class="note"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">Auth</div>
+    <p class="note" id="envNote"></p>
+    <button id="reloadToken" class="btn ghost sm" type="button">⟳ reload token from .env</button>
+    <p class="note">Restart ComfyUI after changing its password, then copy the new <code>token=$2b…</code> from its console.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">
+      Node bindings
+      <button id="checkBindings" class="btn ghost sm" type="button">check</button>
+    </div>
+    <p class="note">Every feature points at a workflow node. A wrong id fails silently, so check after editing.</p>
+    <div id="bindings" class="bindings"></div>
+    <div class="btnrow">
+      <button id="saveBindings" class="btn primary sm" type="button">Save bindings</button>
+      <span id="bindMsg" class="note"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">Workflow</div>
+    <div class="btnrow">
+      <label class="btn ghost sm">replace workflow_api.json<input id="wfUpload" type="file" accept="application/json,.json" hidden></label>
+      <span id="wfMsg" class="note"></span>
+    </div>
+    <details id="nodeListWrap">
+      <summary>node reference</summary>
+      <ul id="nodeList" class="nodelist"></ul>
+    </details>
+  </div>
+</section>
+
+</main>
+
+<nav class="tabs">
+  <button class="tabbtn active" data-tab="generate" type="button">Generate</button>
+  <button class="tabbtn" data-tab="gallery" type="button">Gallery</button>
+  <button class="tabbtn" data-tab="history" type="button">History</button>
+  <button class="tabbtn" data-tab="settings" type="button">Settings</button>
+</nav>
+
+<input id="filePick" type="file" accept="image/*" multiple hidden>
+<div id="lightbox" class="lightbox" hidden>
+  <div class="lb-stage"><img id="lightboxImg" alt="" draggable="false"></div>
+  <div id="lbName" class="lb-name"></div>
+  <div class="lb-bar">
+    <span class="lb-step">
+      <button class="btn ghost sm lb-arrow" id="lbPrev" type="button" aria-label="previous image">‹</button>
+      <span id="lbCount" class="lb-count"></span>
+      <button class="btn ghost sm lb-arrow" id="lbNext" type="button" aria-label="next image">›</button>
+    </span>
+    <span class="lb-zoom">
+      <!--<button class="btn ghost sm" id="lbZoomOut" type="button">−</button>
+      <button class="btn ghost sm" id="lbZoomIn" type="button">+</button>-->
+      <button class="btn ghost sm" id="lbReset" type="button">fit</button>
+    </span>
+    <button class="btn ghost sm" id="lbUse" type="button">⟳ add to prompt</button>
+    <button class="btn ghost sm" id="lbClose" type="button">-✕-</button>
+  </div>
+</div>
+<div id="toast" class="toast" hidden></div>
+
+<script type="module" src="/app.js"></script>
+</body>
+</html>

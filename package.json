@@ -1,0 +1,14 @@
+{
+  "name": "mobile-cfy",
+  "version": "1.0.0",
+  "description": "Node server + mobile web UI for a ComfyUI server (replaces comfy_gen.sh)",
+  "type": "module",
+  "private": true,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test \"test/**/*.test.js\""
+  }
+}
