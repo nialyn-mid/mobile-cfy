@@ -6,6 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { init, saveConfig, paths } from '../lib/config.js';
+import { ComfyClient } from '../lib/comfy.js';
 import { runner } from '../lib/runner.js';
 import { startFakeComfyUI, textOf, sleep, waitFor, dropRoot } from './helpers/fakeComfy.js';
 
@@ -241,6 +242,109 @@ test('a manual pause holds the queue and resume starts it again', async () => {
     assert.equal(runner.resume().paused, false);
     await waitFor(() => runner.get(a.id).status === 'done', 'the held job to run after the resume');
     assert.equal(comfy.state.prompts.length, 1);
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+// ---------------------------------------------------------------- run timers
+
+test('one look at the queue separates queued from running, and says how far back the wait is', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual', holdStart: true });
+  const client = new ComfyClient(`http://127.0.0.1:${comfy.port}`);
+  try {
+    const send = async () =>
+      (await fetch(`http://127.0.0.1:${comfy.port}/prompt`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: {} }),
+      })).json();
+    const one = (await send()).prompt_id;
+    const two = (await send()).prompt_id;
+
+    // Handed over, not begun: the state the run timer has to be right about.
+    assert.deepEqual(await client.queueLookup(one), { state: 'pending', position: 0, remaining: 0 });
+    assert.deepEqual(await client.queueLookup(two), { state: 'pending', position: 1, remaining: 0 });
+
+    comfy.start(one);
+    assert.deepEqual(await client.queueLookup(one), { state: 'running', position: null, remaining: 1 });
+    // The one behind moves up, because the started prompt left the waiting list.
+    assert.deepEqual(await client.queueLookup(two), { state: 'pending', position: 0, remaining: 1 });
+
+    assert.equal((await client.queueLookup('p-never-existed')).state, 'absent');
+
+    // A probe that cannot answer is unknown, never "empty queue": a flaky network
+    // must not read as "the prompt is gone".
+    await comfy.close();
+    assert.deepEqual(await client.queueLookup(one), { state: 'unknown', position: null, remaining: null });
+  } finally {
+    await comfy.close();
+  }
+});
+
+test("a run's timer starts when ComfyUI begins it, not when the phone hands it over", async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual', holdStart: true });
+  const root = useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue(JOB('timer alpha', 2));
+    await waitFor(() => comfy.state.prompts.length === 1, 'the first prompt to be handed over');
+
+    const waiting = runner.get(a.id).runs[0];
+    assert.equal(waiting.promptId !== null, true, 'ComfyUI has it');
+    assert.equal(waiting.startedAt, null, 'but has not begun it, so there is no timer to show');
+
+    const handedOverAt = Date.now();
+    comfy.startAll();
+    await waitFor(() => runner.get(a.id).runs[0].startedAt !== null, 'ComfyUI to begin the prompt');
+
+    const started = Date.parse(runner.get(a.id).runs[0].startedAt);
+    // The stamp is when the run began: not at submit (which would bill it for
+    // the queue's wait) and not in the future either.
+    assert.equal(started >= handedOverAt - 1500, true, 'not stamped before the run began');
+    assert.equal(started <= Date.now() + 500, true, 'and not after it');
+
+    // The queue submits one run at a time, so run 2 only reaches ComfyUI once run
+    // 1 is finished - and its prompt then needs finishing too.
+    const finisher = setInterval(() => {
+      if (comfy.state.pending.size) comfy.completeAll();
+    }, 100);
+    comfy.completeAll();
+    try {
+      await waitFor(() => runner.get(a.id).status === 'done', 'the job to finish');
+    } finally {
+      clearInterval(finisher);
+    }
+    for (const r of runner.get(a.id).runs) {
+      assert.equal(r.startedAt !== null, true, `run ${r.index + 1} has a start`);
+      assert.equal(r.endedAt !== null, true, `run ${r.index + 1} has an end`);
+      assert.equal(Date.parse(r.endedAt) >= Date.parse(r.startedAt), true, 'and the end is never before the start');
+    }
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('a prompt cleared out of the queue never grows a timer, because it never generated', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual', holdStart: true });
+  const root = useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue(JOB('lost prompt', 1));
+    await waitFor(() => comfy.state.prompts.length === 1, 'the prompt to be handed over');
+
+    // Somebody clears ComfyUI's queue up there: the prompt is in neither list and
+    // has no history, which is what a lost prompt looks like.
+    await fetch(`http://127.0.0.1:${comfy.port}/queue`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ delete: [comfy.ids()[0]] }),
+    });
+
+    await waitFor(() => runner.get(a.id).status === 'error', 'the run to be told the prompt is gone');
+    assert.equal(runner.get(a.id).runs[0].startedAt, null, 'it never ran, so it has no generating time');
   } finally {
     cleanup();
     await comfy.close();

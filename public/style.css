@@ -304,6 +304,9 @@ label.btn { display: inline-block; }
 .runs li b { color: var(--fg); font-weight: 600; min-width: 62px; }
 .runs li.err { color: #ff9c9c; }
 .runs li.warn { color: var(--warn); }
+/* Tabular figures so a timer ticking once a second does not shove the rest of
+   the line sideways every time a digit changes width. */
+.run-time { font-variant-numeric: tabular-nums; color: var(--fg); flex: none; }
 /* The run itself succeeded, so the failure rides along as a qualifier instead of
    replacing the run's own line. */
 .run-note { margin-left: auto; font-size: 11px; font-weight: 600; white-space: nowrap; }

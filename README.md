@@ -175,6 +175,23 @@ The detail panel always follows whatever is actually running, so you never have 
 watch a finished job. It repaints itself after a page reload too — the server
 replays the current job list on connect.
 
+### Run timers
+
+Each run in the detail panel carries its own generating-time clock, ticking once a
+second in `m:ss` (`20:35`, and `1:02:05` once it passes the hour). It ticks on the
+page's own clock, not on server messages, so it keeps moving through the long quiet
+stretches where ComfyUI has nothing new to say.
+
+**The clock starts when ComfyUI starts the run**, not when the app hands the prompt
+over. A run that is handed over and then waits its turn reads `waiting at ComfyUI`
+with no timer at all until ComfyUI picks it up — the header line says `2 ahead in
+ComfyUI's queue` meanwhile. That distinction is the point: the number you use to
+judge how long a generation takes should not include however long the queue made
+you wait for it.
+
+A finished run's clock stops where it finished. A run that was dropped from
+ComfyUI's queue before it ever began has no clock, because it never generated.
+
 ### Walking off the network
 
 Two buttons appear next to the queue strip while there is anything in flight:
@@ -512,8 +529,9 @@ npm test      # node --test "test/**/*.test.js"
 Tests cover config merging and the binding/value migrations, payload construction,
 the run matrix, prompt-text capture, download naming, upload sniffing and
 multipart parsing, the history store, the bindings panel's verdict rendering, the
-queue — bulk submit, an auto-paused queue, offline building, resume, and cancel —
-the download-retry sweep, and the shut down route. 148 of them; they need no network
+queue — bulk submit, an auto-paused queue, offline building, resume, cancel, and
+the run-timer start — the download-retry sweep, the run-timer format, and the shut
+down route. 158 of them; they need no network
 and no real ComfyUI (`test/queue.test.js`, `test/retry.test.js` and
 `test/shutdown.test.js` each run a fake ComfyUI from the shared
 `test/helpers/fakeComfy.js`). Every temp root a test creates is deleted again, so
@@ -538,7 +556,8 @@ config.json        generated; all node ids and paths
 workflow_api.json  the ComfyUI workflow, API format
 lib/               config, comfy, ws, payload, runner, download, gallery,
                    history, uploads, multipart, env, retry, shutdown
-public/            index.html, app.js, style.css, bindmark.js  (no build step)
+public/            index.html, app.js, style.css, bindmark.js, durfmt.js
+                   (no build step)
 test/              node --test  (helpers/fakeComfy.js is the shared fake server)
 data/
   history.json     prompt memory (300 newest)

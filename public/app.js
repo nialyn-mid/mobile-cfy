@@ -1,6 +1,7 @@
 // mobile-cfy web UI. No framework, no build step - the server is plain Node.
 
 import { bindingMark } from './bindmark.js';
+import { durationBetween } from './durfmt.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -735,11 +736,31 @@ function trackSnapshot(snap) {
   renderJob(state.job);
 }
 
-function runDuration(r) {
-  if (!r.startedAt) return '';
-  const end = r.endedAt ? Date.parse(r.endedAt) : Date.now();
-  return `${Math.max(0, Math.round((end - Date.parse(r.startedAt)) / 1000))}s`;
+/**
+ * The timers tick on their own clock.
+ *
+ * They used to be plain text written by renderJob, which meant a run timer could
+ * only change when something ELSE changed the page: a run generating for six
+ * minutes with no progress event in between - or simply waiting in ComfyUI's
+ * queue, where nothing at all happens - froze at whatever the last snapshot
+ * said. So the numbers live here and a 1s tick rewrites them, touching nothing
+ * else: no re-render, no request. A finished run has an end time, so its timer
+ * stops for good and the tick goes quiet on it.
+ *
+ * Keyed by element, and rebuilt from scratch on every render, so a re-render can
+ * never leave a stale timer updating a detached <li>.
+ */
+const runTimers = new Map();
+function tickTimers() {
+  const now = Date.now();
+  for (const [el, t] of runTimers) {
+    const text = durationBetween(t.startedAt, t.endedAt, now);
+    if (text === t.text) continue;
+    t.text = text;
+    if (el.isConnected) el.textContent = text;
+  }
 }
+setInterval(tickTimers, 1000);
 
 function renderJob(job) {
   $('jobPanel').hidden = false;
@@ -760,7 +781,10 @@ function renderJob(job) {
   }
   if (cur) {
     bits.push(`run ${cur.index + 1} of ${job.summary.total}`);
-    if (cur.queue != null && cur.queue > 0) bits.push(`queue +${cur.queue}`);
+    // "2 ahead" is the number that predicts the wait; how many prompts are
+    // RUNNING is nearly always 1 and means nothing on a single machine.
+    if (cur.ahead != null && cur.ahead > 0) bits.push(`${cur.ahead} ahead in ComfyUI's queue`);
+    else if (cur.queue != null && cur.queue > 0) bits.push(`queue +${cur.queue}`);
     if (cur.node != null) bits.push(`node ${cur.node}`);
     if (cur.seed != null) bits.push(`seed ${cur.seed}`);
   }
@@ -770,15 +794,29 @@ function renderJob(job) {
 
   const ul = $('runList');
   ul.innerHTML = '';
+  runTimers.clear();
   for (const r of job.runs) {
     const li = document.createElement('li');
     if (r.error) li.className = 'err';
     li.innerHTML = `<b>run ${r.index + 1}</b><span></span>`;
+    // A prompt sitting in ComfyUI's queue has a ComfyUI id but no start time yet.
+    // "running" would be a lie and a timer would be a bigger one, so say what it
+    // is actually doing.
+    const waiting = Boolean(r.promptId) && !r.startedAt && !r.endedAt;
     const detail = r.error
       ? r.error
-      : [r.status, r.seed != null ? `seed ${r.seed}` : null, r.progress ? `${r.progress}%` : null, runDuration(r)]
+      : [waiting ? 'waiting at ComfyUI' : r.status, r.seed != null ? `seed ${r.seed}` : null, r.progress ? `${r.progress}%` : null]
           .filter(Boolean).join(' · ');
     li.lastChild.textContent = detail;
+    const time = durationBetween(r.startedAt, r.endedAt);
+    if (time) {
+      const clock = document.createElement('span');
+      clock.className = 'run-time';
+      clock.textContent = time;
+      clock.title = 'generating time - starts when ComfyUI begins the run';
+      li.append(clock);
+      runTimers.set(clock, { startedAt: r.startedAt, endedAt: r.endedAt, text: time });
+    }
     if (r.promptId) li.title = `ComfyUI prompt ${r.promptId}`;
     // A failed download used to be invisible: it went into run.errors and nothing
     // ever read it, so the image simply was not in the download folder and there

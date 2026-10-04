@@ -44,14 +44,21 @@ export const dropRoot = (root) => fs.rmSync(root, { recursive: true, force: true
  *
  * `mode: 'manual'` keeps every submitted prompt pending until the test finishes
  * it, which is what makes "hand the whole batch over and walk away" observable.
+ *
+ * `holdStart` goes one step further: the prompt sits in `queue_pending`, i.e. it
+ * has been handed over but ComfyUI has not begun it. That is the only state in
+ * which a run has a prompt id and NO start time, so it is the state a timer has
+ * to be right about. `startAll()` (or `start(id)`) moves it to `queue_running`.
  */
-export function startFakeComfyUI({ mode = 'instant' } = {}) {
+export function startFakeComfyUI({ mode = 'instant', holdStart = false } = {}) {
   const state = {
     mode,
+    holdStart,
     prompts: [],
     deleted: [],
     next: 0,
     pending: new Map(),
+    running: new Set(),
     history: new Map(),
     stall: null,
   };
@@ -77,7 +84,10 @@ export function startFakeComfyUI({ mode = 'instant' } = {}) {
         const promptId = `p${n}`;
         state.prompts.push({ id: promptId, payload: body?.prompt, clientId: body?.client_id });
         if (state.mode === 'instant') state.history.set(promptId, entryFor(n, 'x'));
-        else state.pending.set(promptId, n);
+        else {
+          state.pending.set(promptId, n);
+          if (!state.holdStart) state.running.add(promptId);
+        }
         const reply = () => send(200, { prompt_id: promptId, number: n, node_errors: {} });
         // `stallNext` lets a test hold the ANSWER back while the prompt is already
         // recorded, which is the exact window a second submitter would slip into.
@@ -104,15 +114,19 @@ export function startFakeComfyUI({ mode = 'instant' } = {}) {
           for (const id of body?.delete ?? []) {
             state.deleted.push(id);
             state.pending.delete(id);
+            state.running.delete(id);
             state.history.delete(id);
           }
           send(200, {});
         });
         return;
       }
+      // ComfyUI really does separate the two lists, and so must the fake: the
+      // difference between "queued" and "running" is the whole reason the run
+      // timer does not start at submit.
       send(200, {
-        queue_running: [...state.pending.keys()].map((id) => [1, id, {}, {}, []]),
-        queue_pending: [],
+        queue_running: [...state.pending.keys()].filter((id) => state.running.has(id)).map((id) => [1, id, {}, {}, []]),
+        queue_pending: [...state.pending.keys()].filter((id) => !state.running.has(id)).map((id) => [1, id, {}, {}, []]),
       });
       return;
     }
@@ -134,7 +148,18 @@ export function startFakeComfyUI({ mode = 'instant' } = {}) {
         completeAll() {
           for (const [id, n] of state.pending) state.history.set(id, entryFor(n, 'x'));
           state.pending.clear();
+          state.running.clear();
         },
+        /** ComfyUI begins working on the prompts held by `holdStart`. */
+        startAll() {
+          for (const id of state.pending.keys()) state.running.add(id);
+        },
+        /** ...or just one of them, so the rest stay "ahead in the queue". */
+        start(id) {
+          state.running.add(id);
+        },
+        /** Prompts handed over but not begun yet, in queue order. */
+        held: () => [...state.pending.keys()].filter((id) => !state.running.has(id)),
         ids: () => state.prompts.map((p) => p.id),
         /** Hold the next /prompt ANSWER back until the returned gate is released. */
         stallNext() {
