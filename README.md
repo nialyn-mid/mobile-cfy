@@ -2,8 +2,10 @@
 
 A small Node.js server with a mobile web UI that drives a ComfyUI Qwen-Image
 workflow from the phone. It replaces the old `comfy_gen.sh` Termux script and adds
-reference images, a prompt-enhance toggle, a turbo toggle, a step override, and a
-gallery where any generated image can be fed straight back in as an input.
+reference images, a prompt-enhance toggle, a turbo toggle, a Consistency LoRA
+toggle, a step override, an aspect-ratio picker (or the enhancer's own suggested
+one), a prompt history you can re-run from, and a gallery where any generated
+image can be fed straight back in as an input.
 
 **No dependencies.** Node's standard library only — `npm install` is never needed,
 because installing packages in Termux is slow and occasionally broken.
@@ -54,15 +56,23 @@ ComfyUI you must restart ComfyUI, copy the new hash from its console, then press
 
 | Control | What it does |
 |---|---|
-| Prompt | Goes to node `41` (Input Prompt) with enhance on, or node `44` (Raw Prompt) when enhance is off or images are attached |
-| Prompt enhance | Node `176` (`cond`). Ignored while reference images are attached — the workflow routes around it on its own |
+| Prompt | Goes to node `41` (Input Prompt) with enhance on, or node `44` (Raw Prompt) when enhance is off |
+| Prompt enhance | Node `176` (`cond`). Works with reference images attached too — the enhancer reads them itself |
+| Consistency LoRA | Node `207`. On (the default) = through the LoRA, off = the plain model |
 | Turbo | Node `147`, which already selects the turbo or full GGUF (`148` / `183`) for you |
 | Steps | Blank keeps the workflow's 7 (turbo) / 25 (full). A number writes **both** nodes `149` and `150` |
 | Encoder resolution | Node `204` — the size fed to the **text encoder**, not the output size. Blank = the workflow's own 1024 |
-| Megapixels | Node `9` |
+| Megapixels | Node `232`, which feeds node `9` *and* the enhancer's target size |
+| Use suggested aspect | Node `233`. On = the enhancer picks a shape that suits the prompt. It needs the enhancer, so it greys itself out when enhance is off — nothing would be producing a suggestion |
+| Aspect ratio | Node `9`'s `aspect_ratio` combo. Shown when suggested aspect is off. One of the eight the node offers: 1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9, 21:9 |
 | Batch × Shuffle | `batch × shuffle` sequential runs |
 | Prompt refresh | When the override switch (node `68`) fires — see below |
 | Reference images | Up to 4, uploaded to ComfyUI's input dir before the run |
+
+> **A broken binding will not run silently.** Every binding is checked against
+> `workflow_api.json` before a job is accepted; if one points at a node that is
+> gone, Generate refuses with the exact reason ("node 43 is not in the
+> workflow") instead of quietly producing something you did not ask for.
 
 **Prompt refresh** is the interesting one. The workflow memorises the last
 enhanced prompt, so re-submitting identical text reuses it:
@@ -101,10 +111,11 @@ Two details worth knowing:
 Settings and UI state live in the browser's `localStorage`, so they survive a
 reload and a phone restart:
 
-- **Toggles and run settings** — enhance, turbo, save-images, steps, megapixels,
-  batch, shuffle, prompt refresh. Your last choices come back exactly as they
-  were. The *config.json* defaults in Settings only apply on a first run, or if
-  you clear site data.
+- **Toggles and run settings** — enhance, turbo, consistency, save-images, steps,
+  encoder resolution, megapixels, suggested aspect, aspect ratio, batch, shuffle,
+  prompt refresh. Your last choices come back exactly as they were. The
+  *config.json* defaults in Settings only apply on a first run, or if you clear
+  site data.
 - **Which gallery jobs are folded** away.
 - **Not remembered on purpose:** the prompt text (that is History's job) and the
   reference images (they point at one-shot upload handles that a later session
@@ -119,8 +130,16 @@ quietly turn the next, unrelated prompt into an image-to-image job.
 
 **Settings** tab covers the ComfyUI host, the download folder, the filename
 template, and every node binding. **Check bindings** validates all of them against
-the workflow at once — use it after you edit the workflow, because a stale node id
-fails silently rather than loudly.
+the workflow at once. That matters because a stale node id used to fail silently —
+writing `43` after that node was renamed did nothing at all, and the symptom was a
+raw prompt where an enhanced one should have been. Now two things stop that:
+
+- Generate refuses to start when any binding is broken, naming the node.
+- A binding still holding an *old untouched default* is re-pointed at startup and
+  saved, so an upgraded app never keeps writing into a node that moved.
+
+A binding you edited by hand is never rewritten — if you know what you are doing,
+the app keeps out of the way.
 
 ### Queueing
 
@@ -180,7 +199,10 @@ Settings without touching code.
 | `turboSwitch` | `147.value` | TURBO On/Off |
 | `stepsTurbo` / `stepsFull` | `149.value` / `150.value` | Turbo Steps / Full Steps |
 | `seed` | `37.seed` | Seed |
-| `megapixels` | `9.megapixels` | Resolution Selector |
+| `megapixels` | `232.value` | Input Megapixels |
+| `useSuggestedAspect` | `233.value` | Use Suggested Aspect |
+| `aspectRatio` | `9.aspect_ratio` | Resolution Selector |
+| `consistencyLora` | `207.value` | Consistency LoRA |
 | `inputResolution` | `204.value` | Input Resolution |
 
 Set a node id to blank to disable that feature; it is then never written to the
@@ -201,10 +223,11 @@ stores it with the history entry, so you can see the enhancer's wording:
   loads that exact wording into the Generate tab *and turns the enhancer off* —
   what you want once a re-wording comes back worth keeping, so you stop paying
   2–5 minutes per image to redraw wording you already like.
-- The tags say **enhanced prompt** or **raw prompt (enhancer bypassed)**. The
-  workflow bypasses the enhancer on its own whenever a reference image is
-  attached, so the file can hold your untouched prompt even with the toggle on.
-  Labelling that "enhanced" would be a lie.
+- The tags say **enhanced prompt** or **raw prompt (enhancer bypassed)**. The tag
+  is decided by your toggle, not by guessing: enhance on means the enhancer ran,
+  enhance off means node `176` handed your text straight through. If you ever see
+  *raw* with enhance on, the binding is broken — Generate will have refused to
+  start, so check the Settings tab.
 - Captures accumulate. Re-running a remembered prompt adds its new wording(s)
   alongside the old ones rather than replacing them, so a good result never
   disappears because you tried the prompt again.
@@ -216,6 +239,36 @@ Two other settings live outside the bindings:
 
 - `collectNodes` — which `SaveImage` nodes to collect. `[]` collects all of them.
 - `filenameTemplate` — how downloads are named.
+
+### Consistency LoRA
+
+Node `207` "Consistency LoRA" is a boolean that decides whether the model runs
+through the LoRA (`206`) or not — `218`/`221` pick between the plain GGUF and the
+LoRA-patched one. The toggle writes it directly, and it defaults to **on**, which
+is what the workflow's own editor value is. Turning it off genuinely turns the
+LoRA off, which costs VRAM but keeps the plain model — worth doing for one-off
+text-to-image work, and worth leaving on when a run's reference images should
+keep their identity across seeds.
+
+If you would rather leave node `207` alone, set `"consistency": null` in
+`config.json` — the server then writes nothing when a caller omits the field,
+and the checkbox starts off on a fresh device.
+
+### Size: megapixels and shape
+
+The workflow now separates the two things:
+
+- **Node `232` "Input Megapixels"** (a float) is the *budget*. It feeds node `9`
+  and the enhancer's own `Target Megapixels`, so the suggestion and the output
+  agree with whatever you typed.
+- **Node `233` "Use Suggested Aspect"** decides who picks the shape. On, node `226`
+  reads the enhanced prompt and returns an aspect that suits it. Off, node `9`'s
+  own `aspect_ratio` combo is used and the dropdown appears.
+
+Suggested aspect needs the enhancer — it is literally asking the enhancer for a
+shape, so the switch greys itself out (and the server forces node `233` off) when
+Prompt enhance is off. Asking for it is a preference that gets downgraded, not an
+error.
 
 ### Encoder resolution
 
@@ -242,14 +295,24 @@ Images are written to `~/storage/downloads/mobile-cfy` as each run finishes, so 
 cancelled job still leaves you what it completed. Names follow a template:
 
 ```
-{stamp}_{prompt}_{variant}_{seed}
-261002-172913_a-small-red-cube-on-a-white-background_N8_2846668871.png
+{stamp}_s{shuffle}b{batch}i{img}
+261004-001849_s0b0i0.png
 ```
 
-`{stamp}` is `yymmdd-hhmmss`, `{variant}` is the SaveImage node (`N8`, `N45`) or
-its `S8`/`S7` hint when present. Collisions become `name_1.png`, as in the old
-script. Available tokens: `{stamp} {prompt} {variant} {seed} {index} {node}
-{group}`.
+`{stamp}` is `yymmdd-hhmmss` — the moment the image was written — and `s/b/i` are
+the shuffle group, which seed of that group, and which image of that run, so the
+counters say at a glance what produced a file:
+
+```
+261004-001849_s0b0i0.png   shuffle 0, seed 0, image 0   (the S8 final)
+261004-001849_s0b0i1.png   shuffle 0, seed 0, image 1   (the S7 preview)
+261004-002033_s0b1i0.png   shuffle 0, seed 1, image 0
+```
+
+Collisions become `name_1.png`, as in the old script. Available tokens:
+`{stamp} {prompt} {variant} {seed} {index} {node} {group} {shuffle} {batch}
+{img}` — `{shuffle}` falls back to `{group}`, `{batch}` to `{index}`, and `{img}`
+to 0, so an older template that only had `{index}` still renders.
 
 Note that Termux's shared-storage folder is `downloads` (plural). If it is
 missing, run `termux-setup-storage` — Settings has a **Test folder** button that

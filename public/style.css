@@ -135,6 +135,8 @@ input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 .switch input:checked + span { background: var(--accent); border-color: var(--accent); }
 .switch input:checked + span::after { transform: translateX(17px); background: #fff; }
 .switch input:disabled + span { opacity: .4; }
+/* A disabled switch must not look tappable, and the whole row is the label. */
+.switch:has(input:disabled) { opacity: .55; cursor: not-allowed; }
 .switch b { display: block; font-weight: 600; font-size: 14px; }
 .switch i { display: block; font-style: normal; font-size: 11.5px; color: var(--dim); margin-top: 1px; }
 
@@ -178,6 +180,8 @@ label.btn { display: inline-block; }
 /* ------------------------------------------------------------------ misc */
 .note { font-size: 12px; color: var(--dim); margin: 6px 0 0; }
 .note.top { margin: 0 0 10px; }
+/* A saved-but-wrong binding has to out-shout the quiet grey notes above it. */
+.note.bad { color: var(--bad); font-weight: 600; }
 
 /* -------------------------------------------------------------- history */
 .hrow {

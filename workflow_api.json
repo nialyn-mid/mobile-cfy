@@ -19,64 +19,6 @@
       "title": "Load VAE"
     }
   },
-  "4": {
-    "inputs": {
-      "width": [
-        "9",
-        0
-      ],
-      "height": [
-        "9",
-        1
-      ],
-      "batch_size": 1
-    },
-    "class_type": "EmptyLatentImage",
-    "_meta": {
-      "title": "Empty Latent Image"
-    }
-  },
-  "5": {
-    "inputs": {
-      "prompt": [
-        "178",
-        0
-      ],
-      "negative_prompt": "",
-      "resolution": [
-        "204",
-        0
-      ],
-      "clip": [
-        "10",
-        1
-      ],
-      "images.image_1": [
-        "13",
-        0
-      ],
-      "images.image_2": [
-        "137",
-        0
-      ],
-      "images.image_3": [
-        "138",
-        0
-      ],
-      "images.image_4": [
-        "139",
-        0
-      ],
-      "vae": [
-        "3",
-        0
-      ]
-    },
-    "class_type": "TextEncodeQwenImage21",
-    "_meta": {
-      "title": "Text Encode Qwen Image 2.1"
-    }
-  },
   "7": {
     "inputs": {
       "samples": [
@@ -109,7 +51,10 @@
   "9": {
     "inputs": {
       "aspect_ratio": "1:1 (Square)",
-      "megapixels": 0.5,
+      "megapixels": [
+        "232",
+        0
+      ],
       "multiple": 32
     },
     "class_type": "ResolutionSelector",
@@ -187,26 +132,6 @@
       "title": "ON: pass reference / OFF: no image"
     }
   },
-  "14": {
-    "inputs": {
-      "switch": [
-        "165",
-        0
-      ],
-      "on_false": [
-        "4",
-        0
-      ],
-      "on_true": [
-        "5",
-        2
-      ]
-    },
-    "class_type": "ComfySwitchNode",
-    "_meta": {
-      "title": "ON: match reference size / OFF: use aspect ratio"
-    }
-  },
   "18": {
     "inputs": {
       "add_noise": "enable",
@@ -232,16 +157,16 @@
         0
       ],
       "positive": [
-        "5",
+        "230",
         0
       ],
       "negative": [
-        "5",
+        "229",
         1
       ],
       "latent_image": [
-        "14",
-        0
+        "229",
+        2
       ]
     },
     "class_type": "KSamplerAdvanced",
@@ -273,7 +198,7 @@
       ],
       "return_with_leftover_noise": "enable",
       "model": [
-        "174",
+        "224",
         0
       ],
       "positive": [
@@ -285,7 +210,7 @@
         0
       ],
       "latent_image": [
-        "127",
+        "214",
         0
       ]
     },
@@ -318,7 +243,7 @@
       ],
       "return_with_leftover_noise": "enable",
       "model": [
-        "174",
+        "224",
         0
       ],
       "positive": [
@@ -363,7 +288,7 @@
       ],
       "return_with_leftover_noise": "disable",
       "model": [
-        "174",
+        "224",
         0
       ],
       "positive": [
@@ -424,7 +349,7 @@
       ],
       "return_with_leftover_noise": "disable",
       "model": [
-        "174",
+        "224",
         0
       ],
       "positive": [
@@ -447,7 +372,7 @@
   },
   "37": {
     "inputs": {
-      "seed": 213678897324626
+      "seed": 984792413816140
     },
     "class_type": "SeedNode",
     "_meta": {
@@ -465,7 +390,7 @@
   },
   "44": {
     "inputs": {
-      "value": "anime-styled illustration of an anime girl"
+      "value": "anime-styled illustration\n4 view character design of anime girl character in a new 3d gacha game\nensure consistency in views"
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
@@ -483,48 +408,6 @@
     "class_type": "SaveImage",
     "_meta": {
       "title": "Save Image"
-    }
-  },
-  "48": {
-    "inputs": {
-      "source": [
-        "178",
-        0
-      ]
-    },
-    "class_type": "PreviewAny",
-    "_meta": {
-      "title": "Preview as Text"
-    }
-  },
-  "54": {
-    "inputs": {
-      "model_name": "[local] pe_t2i_heretic-Q4_K_M.gguf",
-      "prompt_text": [
-        "41",
-        0
-      ],
-      "preset_system_prompt": "📝 Enhance",
-      "custom_system_prompt": "# Image Prompt Rewriting Expert\n\nYou turn a user's image request into one long English paragraph that describes the\nfinished image as if you were looking at it, plus the aspect ratio it should be\nrendered at. You are not talking to the user and not talking to a renderer: you are\nan observer reporting what is in the frame.\n\nWork through the eight steps below in order. Each step commits one decision; later\nsteps never revise an earlier one.\n\n## Step 1 — Read the brief and split it in two\n\nList what the user has fixed and what they have left open.\n\nFixed, and it must survive into your description unchanged: every string of text\nthey want shown, every named object, every count, every stated colour, every stated\nposition, and the aspect ratio if they gave one. Copy their text strings character\nfor character, in their own script, including punctuation and spacing.\n\nA third thing they may give you is an instruction about the job rather than about the\npicture — \"use double quotes\", \"no hard-edged blocks\", \"4K, no noise\", \"make sure the\ntext is sharp\". That is not content. Obey it silently where it applies and never echo\nit: the description states what is in the frame, never what must be done.\n\nOpen, and you must decide it: everything they did not mention. A three-word request\nand a three-hundred-word request both become a description of the same size, so a\nshort brief means you are inventing most of the frame, not writing less.\n\n## Step 2 — Fix the frame\n\nDecide the orientation from the subject, then pick the ratio.\n\nIf the user states a ratio, use it. Otherwise: `3:2` for anything horizontal and\n`2:3` for anything vertical — these are the two defaults and cover most images.\nUse `1:1` for a square badge, icon, album cover or single centred emblem, `16:9`\nfor a wide cinematic or presentation frame, `1:2` or `9:16` for a phone screen or a\ntall standing banner. `3:4`, `2:1`, `21:9`, `4:3`, `9:21`, `4:5`, `3:1`, `5:4`,\n`1:3` exist but only when the subject or the user really calls for them.\n\nThe ratio lives only in the `wh_ratio` field. Never write a ratio, a resolution, or\na pixel count into the description itself.\n\n## Step 3 — Write the opening sentence\n\nOne sentence, around twenty words. Name the medium, the style, the subject, and the\nbackground or palette; usually name the orientation too:\n\n`The image is a ⟨vertical / wide / square / tall⟩ ⟨style⟩ ⟨photograph · poster · illustration · scene · portrait · infographic · close-up · graphic · page · card · sheet · logo⟩ of ⟨subject⟩, ⟨the background and its palette⟩.`\n\n`This is a …` or a bare `A vertical realistic photograph of …` work equally well. The\nmedium noun is the one part that is never omitted.\n\nThe style word goes here — realistic, photorealistic, minimalist, flat-vector,\ncinematic, watercolour, isometric, editorial, hand-drawn, 3D-rendered, retro. Name\nit once here; you may echo it in the closing sentence.\n\n## Step 4 — Inventory before you write\n\nBefore any more prose, settle two lists.\n\nEvery element that will appear, each with a place in the frame: upper-left,\nacross the top, on the far right, in the lower-third, in the centre, in front of,\nbehind, tucked into the corner. You will need eight to fourteen such positional\nphrases, about ten typically, and they must reach the corners, the edges and the\ncentre — not cluster in the middle.\n\nEvery piece of text that will be legible in the image, in reading order.\n\n## Step 5 — Walk the frame\n\nNow describe it in order. Which order depends on how the frame is filled.\n\n**If the frame is divided into regions** — a poster, a page, an interface, a layout, a\nwide scene with several things in it — walk the regions:\n\n1. The background and the surface it sits on — this comes immediately after the\n   opening sentence, not at the end.\n2. The top band: headline, header bar, sky, ceiling, whatever occupies the top edge.\n3. Down and across the body of the frame: left side, then centre, then right side.\n   Give each region one or two sentences.\n4. The bottom band: footer, foreground, ground plane, base row.\n\n**If one subject fills the frame** — a portrait, a close-up, a single object — walk\nthe subject instead: the background and how far it falls off, then the subject's pose\nand where it is placed in the frame, then head and face, then body and each garment or\nsurface, then what is held or touching it, then whatever little is left at the edges.\nKeep using positional phrases inside the subject — in the upper-left of the frame,\nbehind the left shoulder, along the lower edge — so the frame stays locatable.\n\nRoughly a third of your sentences should open on the positional phrase itself —\n\"On the right side of the frame, …\", \"In the upper-left corner, …\", \"Across the\nlower third, …\" — so the reader always knows where they are looking.\n\nKeep it to one paragraph. Break to a new paragraph only when the image is genuinely\nbuilt from stacked regions — panels, cards, sections, slides — and then one\nparagraph per region, each opening on where that region sits.\n\n## Step 6 — Set every piece of text\n\nSkip this step if nothing in the image is meant to be read — a third of images have\nno legible text at all, and inventing signage for them is a mistake.\n\nOtherwise, for each string from your Step 4 list, in reading order, name where it sits,\nwhat it looks like, and what it says: `a bold black headline across the top reads \"…\"`.\n\nPut the string in straight double quotes, in its own script — Chinese, Russian,\nKorean, Japanese and Arabic text stays in Chinese, Russian, Korean, Japanese and\nArabic. Give its weight, colour, case and relative size. Describe a line break as a\nsecond line rather than putting a real newline inside the string. If a mark is not meant\nto be read — distant signage, a label behind glass, dense body copy — call it\nblurred, indistinct, or too small to read rather than inventing letters. If the image contains a chart\nor a table, its axes, tick labels, legend entries, series and cell values are text\ntoo: write them out.\n\n## Step 7 — Give the lighting its own sentence\n\nEvery image has light in it, and the description always accounts for it: the source,\nits direction, its quality, and the shadows and highlights it leaves. Soft diffused\ndaylight from a window on the left, hard overhead studio light, warm low sun, flat\neven ambient light for a diagram.\n\nOnce the contents are placed, give it a sentence of its own — `The lighting is …` —\nor, if the light is what makes a particular surface look the way it does, fold it into\nthat surface's sentence. Either way it is stated explicitly, not left implied.\n\n## Step 8 — Close with the whole frame\n\nEnd on a single sentence that steps back:\n\n`The overall composition ⟨is / uses / feels⟩ …`\n\n`The composition is …`, `The overall design …`, `The overall mood …`, `The overall\npalette …` and `The image has …` are the same move. Cover balance and symmetry, the\npalette, the style, and the mood in that one sentence. Write exactly one such\nsentence — do not follow it with a second summary.\n\n## Throughout\n\n**Size.** The description runs about twenty sentences and four to five hundred words,\nroughly twenty-five words a sentence. That is the same size whether the brief was three\nwords or three hundred: a dense frame with many regions and a lot of text runs longer, a\nsingle quiet subject runs shorter, but a thin brief never buys a thin description.\n\n**Observe, don't instruct.** Present tense, third person, declarative. No \"you\", no\n\"create\", no \"make sure\", no \"the AI should\". No quality boosters — no \"masterpiece\",\n\"8K\", \"highly detailed\", \"award-winning\".\n\n**Hedge what you cannot be certain of.** An observer describing a picture says\n\"appears to be\", \"likely\", \"suggesting\", and offers a pair — \"a notebook\nor a tablet\", \"wood or dark laminate\" — when the thing is genuinely ambiguous. Do\nthis often; it is the natural register here. Be flatly definite only about what the\nuser fixed.\n\n**Name colours with a modifier, almost never bare.** Deep navy, muted olive, pale\ncream, warm terracotta, soft dusty rose, blue-grey, off-white, charcoal, brownish-\ngreen. Hex codes only if the user gave them.\n\n**Give the material, not just the noun.** Brushed metal, matte plastic, glossy\nceramic, coarse linen, weathered wood, frosted glass, grain, scuffs, condensation,\nvisible brush strokes, paper fibre.\n\n**Enumerate; never summarise.** \"Several items\" and \"various decorations\" are not\ndescriptions. Say what each thing is. Write small counts as words — three, five,\ntwelve — and if something is partly hidden, say so and describe the visible part.\n\n**People get their observable surface.** Build, posture, where they are looking,\nexpression, hair, skin tone, and each garment with its colour and material. Age is a\nlife stage or a decade — a child, a teenager, a young adult, middle-aged, elderly,\nin her thirties — never a number of years. If a face is turned away or cropped, say\nthat instead of describing it.\n\n**Objects by class, not by brand.** A silver laptop, a mirrorless camera, a compact\nhatchback — unless the user named the brand. Photographic and design vocabulary is\nwelcome: shallow depth of field, bokeh, backlit, close-up, negative space,\ngrid, drop shadow.\n\n**Everything holds together physically.** Shadows fall away from the light, reflections\nmatch what is in front of the surface, scale is consistent between neighbouring\nobjects, and a surface reacts to what sits on it. If the user asked for something\nimpossible, describe it as the image shows it and let the rest of the scene stay\ncoherent around it.\n\n## Language\n\nThe description is always in English, whatever language the request arrives in. The\nonly exception is text shown inside the image, which stays in its own script.\n\n## Output format\n\nReturn one strictly valid JSON object on a single line, nothing before or after:\n\n{\"rewritten_prompt\": \"<the description>\", \"wh_ratio\": \"<e.g. 3:2>\"}\n",
-      "max_tokens": 2048,
-      "temperature": 0.7,
-      "top_p": 0.9,
-      "repetition_penalty": 1.1,
-      "english_output": false,
-      "device": "auto",
-      "keep_model_loaded": false,
-      "seed": [
-        "37",
-        0
-      ],
-      "keep_last_prompt": [
-        "70",
-        0
-      ]
-    },
-    "class_type": "AILab_QwenVL_GGUF_PromptEnhancer",
-    "_meta": {
-      "title": "Qwen3.5-Uncensored Prompt Enhancer (GGUF)"
     }
   },
   "56": {
@@ -548,7 +431,7 @@
   "58": {
     "inputs": {
       "string_a": [
-        "54",
+        "238",
         0
       ],
       "string_b": [
@@ -570,7 +453,7 @@
         0
       ],
       "on_false": [
-        "54",
+        "238",
         0
       ],
       "on_true": [
@@ -596,33 +479,13 @@
     "inputs": {
       "loop_id": "Input-Prompt",
       "to_memory": [
-        "66",
+        "41",
         0
       ]
     },
     "class_type": "MemorizeString",
     "_meta": {
       "title": "Memorize String"
-    }
-  },
-  "66": {
-    "inputs": {
-      "switch": [
-        "56",
-        0
-      ],
-      "on_false": [
-        "41",
-        0
-      ],
-      "on_true": [
-        "108",
-        0
-      ]
-    },
-    "class_type": "ComfySwitchNode",
-    "_meta": {
-      "title": "If/Else Switch"
     }
   },
   "67": {
@@ -662,63 +525,10 @@
       "title": "Not Equal, So Refresh"
     }
   },
-  "70": {
-    "inputs": {
-      "value": [
-        "67",
-        0
-      ]
-    },
-    "class_type": "ComfyNotNode",
-    "_meta": {
-      "title": "Not Keep, Refresh"
-    }
-  },
-  "71": {
-    "inputs": {
-      "prompt": [
-        "76",
-        0
-      ],
-      "negative_prompt": "",
-      "resolution": [
-        "204",
-        0
-      ],
-      "clip": [
-        "82",
-        0
-      ],
-      "images.image_1": [
-        "13",
-        0
-      ],
-      "images.image_2": [
-        "137",
-        0
-      ],
-      "images.image_3": [
-        "138",
-        0
-      ],
-      "images.image_4": [
-        "139",
-        0
-      ],
-      "vae": [
-        "3",
-        0
-      ]
-    },
-    "class_type": "TextEncodeQwenImage21",
-    "_meta": {
-      "title": "Text Encode Qwen Image 2.1"
-    }
-  },
   "73": {
     "inputs": {
       "string_a": [
-        "178",
+        "176",
         0
       ],
       "string_b": [
@@ -774,7 +584,7 @@
         0
       ],
       "tt_value": [
-        "173",
+        "221",
         0
       ],
       "ff_value": [
@@ -810,11 +620,11 @@
         0
       ],
       "on_false": [
-        "5",
+        "229",
         1
       ],
       "on_true": [
-        "71",
+        "250",
         1
       ]
     },
@@ -830,11 +640,11 @@
         0
       ],
       "on_false": [
-        "5",
+        "230",
         0
       ],
       "on_true": [
-        "71",
+        "250",
         0
       ]
     },
@@ -922,20 +732,13 @@
       "title": "Save Latent"
     }
   },
-  "127": {
+  "126": {
     "inputs": {
-      "switch": [
-        "128",
-        0
-      ],
-      "on_false": [
-        "18",
-        0
-      ]
+      "latent": null
     },
-    "class_type": "ComfySwitchNode",
+    "class_type": "LoadLatent",
     "_meta": {
-      "title": "From Latent"
+      "title": "Load Latent"
     }
   },
   "128": {
@@ -944,7 +747,7 @@
     },
     "class_type": "PrimitiveBoolean",
     "_meta": {
-      "title": "Boolean"
+      "title": "Recall Latent"
     }
   },
   "129": {
@@ -958,7 +761,7 @@
         0
       ],
       "ff_value": [
-        "174",
+        "224",
         0
       ]
     },
@@ -1071,7 +874,7 @@
   },
   "147": {
     "inputs": {
-      "value": false
+      "value": true
     },
     "class_type": "PrimitiveBoolean",
     "_meta": {
@@ -1205,18 +1008,6 @@
       "title": "Compare Anything"
     }
   },
-  "165": {
-    "inputs": {
-      "input1": [
-        "158",
-        0
-      ]
-    },
-    "class_type": "ConvertAny2Boolean",
-    "_meta": {
-      "title": "Convert to Boolean"
-    }
-  },
   "166": {
     "inputs": {
       "operation": "subtraction",
@@ -1330,8 +1121,12 @@
         "147",
         0
       ],
-      "on_true": [
+      "on_false": [
         "10",
+        1
+      ],
+      "on_true": [
+        "172",
         1
       ]
     },
@@ -1362,7 +1157,7 @@
   },
   "176": {
     "inputs": {
-      "cond": false,
+      "cond": true,
       "tt_value": [
         "59",
         0
@@ -1377,32 +1172,11 @@
       "title": "Prompt Enhance On/Off"
     }
   },
-  "178": {
-    "inputs": {
-      "select": [
-        "180",
-        0
-      ],
-      "sel_mode": false,
-      "input1": [
-        "176",
-        0
-      ],
-      "input2": [
-        "44",
-        0
-      ]
-    },
-    "class_type": "ImpactSwitch",
-    "_meta": {
-      "title": "Switch (Any)"
-    }
-  },
   "179": {
     "inputs": {
       "operation": "addition",
       "int_1": [
-        "158",
+        "248",
         0
       ],
       "int_2": 1
@@ -1412,26 +1186,12 @@
       "title": "Int Math"
     }
   },
-  "180": {
-    "inputs": {
-      "operation": "min",
-      "int_1": [
-        "179",
-        0
-      ],
-      "int_2": 2
-    },
-    "class_type": "CyclistMathInt",
-    "_meta": {
-      "title": "Int Math"
-    }
-  },
   "181": {
     "inputs": {
-      "filename_prefix": "ComfyUI",
+      "filename_prefix": "enhanced/prompt",
       "format": "txt",
       "text": [
-        "178",
+        "176",
         0
       ]
     },
@@ -1511,6 +1271,565 @@
     "class_type": "PrimitiveInt",
     "_meta": {
       "title": "Input Resolution"
+    }
+  },
+  "206": {
+    "inputs": {
+      "lora_name": "qwen-image-2.1-consistency.safetensors",
+      "strength_model": 1,
+      "strength_clip": 1,
+      "model": [
+        "174",
+        0
+      ],
+      "clip": [
+        "173",
+        0
+      ]
+    },
+    "class_type": "LoraLoader",
+    "_meta": {
+      "title": "Load LoRA (Model and CLIP)"
+    }
+  },
+  "207": {
+    "inputs": {
+      "value": true
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Consistency LoRA"
+    }
+  },
+  "211": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "212",
+        0
+      ],
+      "int_2": 1
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "212": {
+    "inputs": {
+      "input1": [
+        "128",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2Int",
+    "_meta": {
+      "title": "Convert to Int"
+    }
+  },
+  "214": {
+    "inputs": {
+      "select": [
+        "211",
+        0
+      ],
+      "sel_mode": false,
+      "input1": [
+        "18",
+        0
+      ],
+      "input2": [
+        "126",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "218": {
+    "inputs": {
+      "select": [
+        "219",
+        0
+      ],
+      "sel_mode": false,
+      "input1": [
+        "174",
+        0
+      ],
+      "input2": [
+        "206",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "219": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "220",
+        0
+      ],
+      "int_2": 1
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "220": {
+    "inputs": {
+      "input1": [
+        "207",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2Int",
+    "_meta": {
+      "title": "Convert to Int"
+    }
+  },
+  "221": {
+    "inputs": {
+      "select": [
+        "219",
+        0
+      ],
+      "sel_mode": false,
+      "input1": [
+        "173",
+        0
+      ],
+      "input2": [
+        "206",
+        1
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "224": {
+    "inputs": {
+      "switch": false,
+      "on_false": [
+        "218",
+        0
+      ],
+      "on_true": [
+        "218",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "Compatibility Forwarder"
+    }
+  },
+  "226": {
+    "inputs": {
+      "Prompt": [
+        "41",
+        0
+      ],
+      "Task": "Auto (by images)",
+      "Seed": [
+        "37",
+        0
+      ],
+      "Use Cache": true,
+      "Target Megapixels": [
+        "232",
+        0
+      ],
+      "Aspect Ratio": "Auto (model decides)",
+      "Prompt Count": 1,
+      "Output Language": "Auto (official)",
+      "Prompt Enhancement": true,
+      "pe_model": [
+        "227",
+        0
+      ],
+      "pe_settings": [
+        "228",
+        0
+      ],
+      "Image 1": [
+        "13",
+        0
+      ],
+      "Image 2": [
+        "137",
+        0
+      ],
+      "Image 3": [
+        "138",
+        0
+      ],
+      "Image 4": [
+        "139",
+        0
+      ]
+    },
+    "class_type": "QwenImage21PromptEnhancer",
+    "_meta": {
+      "title": "Qwen Image 2.1 Prompt Enhancer"
+    }
+  },
+  "227": {
+    "inputs": {
+      "T2I GGUF": "GGUF/pe_t2i_heretic-Q4_K_M.gguf",
+      "I2I GGUF": "Qwen-Image-2.1-I2I-GGUF/Qwen-Image-2.1-PE-I2I-Heretic-Q4_K_M.gguf",
+      "Vision Model": "Qwen-Image-2.1-I2I-GGUF/Qwen-Image-2.1-PE-I2I.mmproj-bf16 (1).gguf",
+      "GPU Offload Layers": -1,
+      "Context Length": "16384",
+      "System Prompt File": "",
+      "Thinking": true,
+      "Unload Model After Generation": true,
+      "Plan Tokens": 800
+    },
+    "class_type": "QwenImage21PELoaderGGUF",
+    "_meta": {
+      "title": "Qwen Image 2.1 PE Loader (GGUF)"
+    }
+  },
+  "228": {
+    "inputs": {
+      "Sampling Preset": "Official defaults",
+      "Temperature": 1,
+      "Top P": 0.95,
+      "Top K": 20,
+      "Presence Penalty": 1.5,
+      "Max New Tokens": 0
+    },
+    "class_type": "QwenImage21PESettings",
+    "_meta": {
+      "title": "Qwen Image 2.1 PE Settings"
+    }
+  },
+  "229": {
+    "inputs": {
+      "prompts": [
+        "176",
+        0
+      ],
+      "negative_prompt": "",
+      "resolution": [
+        "204",
+        0
+      ],
+      "width": [
+        "235",
+        0
+      ],
+      "height": [
+        "234",
+        0
+      ],
+      "batch_size": 1,
+      "clip": [
+        "221",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "image_1": [
+        "13",
+        0
+      ],
+      "image_2": [
+        "137",
+        0
+      ],
+      "image_3": [
+        "138",
+        0
+      ],
+      "image_4": [
+        "139",
+        0
+      ]
+    },
+    "class_type": "QwenImage21TextEncodeList",
+    "_meta": {
+      "title": "Text Encode Qwen Image 2.1 (List)"
+    }
+  },
+  "230": {
+    "inputs": {
+      "conditioning": [
+        "229",
+        0
+      ],
+      "clip": [
+        "221",
+        0
+      ]
+    },
+    "class_type": "PromptEnhancerReleaseTextEncoder",
+    "_meta": {
+      "title": "Release Text Encoder (VRAM)"
+    }
+  },
+  "232": {
+    "inputs": {
+      "value": 0.3
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Input Megapixels"
+    }
+  },
+  "233": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Use Suggested Aspect"
+    }
+  },
+  "234": {
+    "inputs": {
+      "switch": [
+        "233",
+        0
+      ],
+      "on_false": [
+        "9",
+        1
+      ],
+      "on_true": [
+        "241",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "235": {
+    "inputs": {
+      "switch": [
+        "233",
+        0
+      ],
+      "on_false": [
+        "9",
+        0
+      ],
+      "on_true": [
+        "240",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "238": {
+    "inputs": {
+      "select": [
+        "179",
+        0
+      ],
+      "sel_mode": false,
+      "input1": [
+        "246",
+        0
+      ],
+      "input2": [
+        "226",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "240": {
+    "inputs": {
+      "select": [
+        "179",
+        0
+      ],
+      "sel_mode": false,
+      "input1": [
+        "245",
+        0
+      ],
+      "input2": [
+        "226",
+        4
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "241": {
+    "inputs": {
+      "select": [
+        "179",
+        0
+      ],
+      "sel_mode": false,
+      "input1": [
+        "247",
+        0
+      ],
+      "input2": [
+        "226",
+        5
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "242": {
+    "inputs": {
+      "loop_id": "Last-Width",
+      "to_memory": [
+        "240",
+        0
+      ]
+    },
+    "class_type": "MemorizeInt",
+    "_meta": {
+      "title": "Memorize Int"
+    }
+  },
+  "243": {
+    "inputs": {
+      "loop_id": "Last-Height",
+      "to_memory": [
+        "241",
+        0
+      ]
+    },
+    "class_type": "MemorizeInt",
+    "_meta": {
+      "title": "Memorize Int"
+    }
+  },
+  "244": {
+    "inputs": {
+      "loop_id": "Last-Enhanced-Prompt",
+      "to_memory": [
+        "238",
+        0
+      ]
+    },
+    "class_type": "MemorizeString",
+    "_meta": {
+      "title": "Memorize String"
+    }
+  },
+  "245": {
+    "inputs": {
+      "loop_id": "Last-Width",
+      "fallback": 0
+    },
+    "class_type": "RecallInt",
+    "_meta": {
+      "title": "Recall Int"
+    }
+  },
+  "246": {
+    "inputs": {
+      "loop_id": "Last-Enhanced-Prompt",
+      "fallback": ""
+    },
+    "class_type": "RecallString",
+    "_meta": {
+      "title": "Recall String"
+    }
+  },
+  "247": {
+    "inputs": {
+      "loop_id": "Last-Height",
+      "fallback": 0
+    },
+    "class_type": "RecallInt",
+    "_meta": {
+      "title": "Recall Int"
+    }
+  },
+  "248": {
+    "inputs": {
+      "input1": [
+        "67",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2Int",
+    "_meta": {
+      "title": "Convert to Int"
+    }
+  },
+  "250": {
+    "inputs": {
+      "prompts": [
+        "76",
+        0
+      ],
+      "negative_prompt": "",
+      "resolution": [
+        "204",
+        0
+      ],
+      "width": [
+        "235",
+        0
+      ],
+      "height": [
+        "234",
+        0
+      ],
+      "batch_size": 1,
+      "clip": [
+        "82",
+        0
+      ],
+      "vae": [
+        "3",
+        0
+      ],
+      "image_1": [
+        "13",
+        0
+      ],
+      "image_2": [
+        "137",
+        0
+      ],
+      "image_3": [
+        "138",
+        0
+      ],
+      "image_4": [
+        "139",
+        0
+      ]
+    },
+    "class_type": "QwenImage21TextEncodeList",
+    "_meta": {
+      "title": "Text Encode Qwen Image 2.1 (List)"
     }
   }
 }

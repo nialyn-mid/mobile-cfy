@@ -35,6 +35,9 @@
     <label class="switch"><input type="checkbox" id="turbo"><span></span>
       <div><b>Turbo model</b><i>qwen_image_2.1_turbo_Q4_K_M.gguf</i></div>
     </label>
+    <label class="switch"><input type="checkbox" id="consistency" checked><span></span>
+      <div><b>Consistency LoRA</b><i>qwen-image-2.1-consistency.safetensors</i></div>
+    </label>
     <label class="switch"><input type="checkbox" id="collect" checked><span></span>
       <div><b>Save images</b><i>download to the configured folder</i></div>
     </label>
@@ -46,15 +49,26 @@
       <span class="lbl">Encoder resolution
         <a id="helpResolution" class="hint" title="how this works">?</a>
       </span>
-      <input type="number" id="inputResolution" min="64" max="8192" step="64" inputmode="numeric" placeholder="workflow default">
+      <input type="number" id="inputResolution" min="64" max="8192" step="64" inputmode="numeric" placeholder="1024">
     </label>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">Size</div>
+    <label class="switch"><input type="checkbox" id="useSuggestedAspect"><span></span>
+      <div><b>Use suggested aspect
+        <a href="#" id="helpAspect" class="hint">?</a>
+      </b><i id="aspectHint">let the enhancer choose the shape</i></div>
+    </label>
+    <label class="field" id="aspectField"><span class="lbl">Aspect ratio</span>
+      <select id="aspectRatio"></select></label>
   </div>
 
   <div class="card">
     <div class="card-hd">Run</div>
     <div class="row3">
       <label class="field"><span class="lbl">Megapixels</span>
-        <input type="number" id="megapixels" value="4" min="0.1" step="0.1" inputmode="decimal"></label>
+        <input type="number" id="megapixels" value="1" min="0.1" step="0.1" inputmode="decimal"></label>
       <label class="field"><span class="lbl">Batch</span>
         <input type="number" id="batch" value="1" min="1" step="1" inputmode="numeric"></label>
       <label class="field"><span class="lbl">Shuffle</span>
@@ -74,7 +88,7 @@
       Reference images
       <span class="pill" id="slotPill">0 / 4</span>
     </div>
-    <p class="note">Reference mode switches on automatically when an image is attached, and the prompt then bypasses the enhancer.</p>
+    <p class="note">The enhancer reads the attached images too, so a prompt with references is still enhanced.</p>
     <div id="slots" class="slots"></div>
     <div class="btnrow">
       <button class="btn ghost sm" id="fillFromGallery" type="button">⤓ last 4 from gallery</button>

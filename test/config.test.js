@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { parseEnv } from '../lib/env.js';
-import { deepMerge, mergeConfig, DEFAULTS, expandHome } from '../lib/config.js';
+import { deepMerge, mergeConfig, migrateBindings, migrateValues, DEFAULTS, expandHome } from '../lib/config.js';
+import { ASPECT_RATIOS } from '../lib/payload.js';
 
 test('parseEnv reads plain, quoted, and empty assignments', () => {
   const text = ['# comment', 'AUTH_TOKEN=$2b$12$abc', 'QUOTED="two words"', "SINGLE='q'", 'EMPTY=', 'no_equals_here', '', 'SPACED = spaced '].join('\n');
@@ -70,12 +72,106 @@ test('defaults match the real workflow node ids', () => {
   assert.equal(b.stepsTurbo.node, '149');
   assert.equal(b.stepsFull.node, '150');
   assert.equal(b.seed.node, '37');
-  assert.equal(b.megapixels.node, '9');
+  assert.equal(b.megapixels.node, '232');
+  assert.equal(b.megapixels.input, 'value', '232 is a PrimitiveFloat, not node 9');
+  assert.equal(b.useSuggestedAspect.node, '233');
+  assert.equal(b.aspectRatio.node, '9');
+  assert.equal(b.aspectRatio.input, 'aspect_ratio');
+  assert.equal(b.consistencyLora.node, '207');
   assert.equal(b.inputResolution.node, '204');
   assert.deepEqual(b.images.map((i) => i.node), ['11', '140', '141', '142']);
   assert.deepEqual(DEFAULTS.collectNodes, [], 'both S7 and S8 are collected by default');
   assert.deepEqual(DEFAULTS.promptTextNodes, ['181'], 'the workflow SaveText node');
   assert.equal(DEFAULTS.defaults.inputResolution, null, 'blank means the workflow default');
+  assert.equal(DEFAULTS.defaults.consistency, true, 'on, like the workflow editor');
+  assert.equal(DEFAULTS.defaults.useSuggestedAspect, false);
+  assert.equal(DEFAULTS.defaults.aspectRatio, '1:1 (Square)');
+});
+
+test('the default aspect ratio is one the workflow combo actually offers', () => {
+  const combo = Object.values(
+    JSON.parse(fs.readFileSync(new URL('../workflow_api.json', import.meta.url), 'utf8')),
+  ).find((n) => n.class_type === 'ResolutionSelector')?.inputs?.aspect_ratio;
+  // The live value is whatever the editor last picked; what matters is that the
+  // default we ship is spelled the way the node's own dropdown spells it.
+  assert.ok(typeof combo === 'string', 'expected a ResolutionSelector with an aspect_ratio combo');
+  for (const r of ASPECT_RATIOS) {
+    assert.equal(typeof r, 'string');
+    assert.match(r, /^\d+:\d+ \(.+\)$/, `"${r}" should look like the node's own entries`);
+  }
+  assert.ok(ASPECT_RATIOS.includes(DEFAULTS.defaults.aspectRatio));
+});
+
+test('a config saved before the workflow moved is re-pointed, not left dead', () => {
+  // This is the "I changed the node id and nothing happened" trap: mergeConfig
+  // reconciles binding NAMES, so a stale VALUE survives and keeps writing into
+  // the node the binding used to live on.
+  const saved = mergeConfig(DEFAULTS, { bindings: { megapixels: { node: '9', input: 'megapixels' } } });
+  assert.deepEqual(saved.bindings.megapixels, { node: '9', input: 'megapixels' }, 'precondition');
+
+  assert.deepEqual(migrateBindings(saved.bindings), ['megapixels']);
+  assert.deepEqual(saved.bindings.megapixels, { node: '232', input: 'value' });
+});
+
+test('a hand-edited binding is never rewritten by the migration', () => {
+  const bindings = { megapixels: { node: '55', input: 'value' } };
+  assert.deepEqual(migrateBindings(bindings), []);
+  assert.deepEqual(bindings.megapixels, { node: '55', input: 'value' });
+});
+
+test('the migration is a no-op once the config already points at the new node', () => {
+  const bindings = mergeConfig(DEFAULTS, { bindings: {} }).bindings;
+  assert.deepEqual(migrateBindings(bindings), []);
+  assert.deepEqual(bindings.megapixels, { node: '232', input: 'value' });
+});
+
+test('a null binding is skipped instead of being resurrected', () => {
+  const bindings = { megapixels: null };
+  assert.deepEqual(migrateBindings(bindings), []);
+  assert.equal(bindings.megapixels, null, 'null means the user turned the feature off');
+});
+
+test('a setting still holding the old default is upgraded', () => {
+  // config.json written before the filename default changed keeps the OLD value
+  // forever, because mergeConfig only fills gaps - which is how a shipped
+  // default change can look like it never landed.
+  const cfg = { filenameTemplate: '{stamp}_{prompt}_{variant}_{seed}' };
+  assert.deepEqual(migrateValues(cfg), ['filenameTemplate']);
+  assert.equal(cfg.filenameTemplate, '{stamp}_s{shuffle}b{batch}i{img}');
+});
+
+test('a filename template the user wrote is never rewritten', () => {
+  const cfg = { filenameTemplate: 'my_{prompt}' };
+  assert.deepEqual(migrateValues(cfg), []);
+  assert.equal(cfg.filenameTemplate, 'my_{prompt}');
+  assert.deepEqual(migrateValues({ filenameTemplate: '{stamp}_s{shuffle}b{batch}i{img}' }), [], 'idempotent');
+});
+
+test('the shipped default survives a merge over a saved config', () => {
+  // End to end for the bug: old saved value in, new default out.
+  const merged = mergeConfig(DEFAULTS, { filenameTemplate: '{stamp}_{prompt}_{variant}_{seed}' });
+  migrateValues(merged);
+  assert.equal(merged.filenameTemplate, DEFAULTS.filenameTemplate);
+});
+
+test('the Consistency LoRA default upgrades through a dotted path', () => {
+  // It shipped as null ("do not touch node 207"), which a checkbox cannot show:
+  // an untouched switch rendered as off and forced the LoRA OFF on every run,
+  // where the workflow's own editor value is True.
+  const cfg = { defaults: { consistency: null } };
+  assert.deepEqual(migrateValues(cfg), ['defaults.consistency']);
+  assert.equal(cfg.defaults.consistency, true);
+  assert.deepEqual(migrateValues(cfg), [], 'idempotent');
+});
+
+test('a Consistency LoRA choice the user made is never rewritten', () => {
+  const cfg = { defaults: { consistency: false } };
+  assert.deepEqual(migrateValues(cfg), []);
+  assert.equal(cfg.defaults.consistency, false);
+});
+
+test('the Consistency LoRA ships on, matching the workflow', () => {
+  assert.equal(DEFAULTS.defaults.consistency, true);
 });
 
 test('a renamed binding is dropped, not left pointing at a dead node', () => {

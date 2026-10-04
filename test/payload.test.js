@@ -15,6 +15,7 @@ import {
   normalizeSlots,
   setBinding,
   newSeed,
+  ASPECT_RATIOS,
 } from '../lib/payload.js';
 import { runPayloadOptions } from '../lib/runner.js';
 
@@ -65,11 +66,13 @@ test('SaveImage nodes exist so collectImages has something to collect', () => {
 
 // ------------------------------------------------------------- prompt routing
 
-test('prompt routing follows the workflow node 155 rule', () => {
-  assert.equal(promptTarget({ promptEnhance: true, imageCount: 0 }), 'enhanced');
-  assert.equal(promptTarget({ promptEnhance: false, imageCount: 0 }), 'raw');
-  assert.equal(promptTarget({ promptEnhance: true, imageCount: 1 }), 'raw');
-  assert.equal(promptTarget({ promptEnhance: false, imageCount: 4 }), 'raw');
+test('prompt routing depends only on the enhance toggle', () => {
+  // The enhancer (node 226) reads the reference images itself, so images no
+  // longer force the raw branch - that was the old node 178 rule, now gone.
+  assert.equal(promptTarget({ promptEnhance: true }), 'enhanced');
+  assert.equal(promptTarget({ promptEnhance: false }), 'raw');
+  assert.equal(promptTarget({ promptEnhance: true, imageCount: 4 }), 'enhanced');
+  assert.equal(promptTarget({}), 'enhanced');
 });
 
 test('enhance on, no image: text goes to node 41 and the gate opens', () => {
@@ -87,14 +90,14 @@ test('enhance off: text goes to node 44 and node 176 closes', () => {
   assert.deepEqual(wf['41'], WORKFLOW['41'], 'node 41 must be left untouched');
 });
 
-test('an attached image forces node 44 even when enhance is on', () => {
+test('an attached image no longer bypasses the enhancer', () => {
   const wf = buildRunPayload(WORKFLOW, B, {
     prompt: 'a cat',
     promptEnhance: true,
     images: ['ref_a.png'],
   });
-  assert.equal(wf['44'].inputs.value, 'a cat');
-  assert.equal(wf['176'].inputs.cond, false, 'the enhancer must not run for an image job');
+  assert.equal(wf['41'].inputs.value, 'a cat', 'the enhancer gets the prompt, node 226 reads the image');
+  assert.equal(wf['176'].inputs.cond, true);
   assert.equal(wf['158'].inputs.value, 1, 'one image means Image Count 1');
 });
 
@@ -139,7 +142,9 @@ test('no steps override leaves the workflow defaults alone', () => {
 
 test('megapixels and seed land on their bindings', () => {
   const wf = buildRunPayload(WORKFLOW, B, { prompt: 'x', megapixels: 1.5, seed: 123456 });
-  assert.equal(wf['9'].inputs.megapixels, 1.5);
+  // 232 "Input Megapixels" is a PrimitiveFloat now, and it feeds node 9 as well
+  // as the enhancer's own target, so the write goes there rather than to node 9.
+  assert.equal(wf['232'].inputs.value, 1.5);
   assert.equal(wf['37'].inputs.seed, 123456);
 });
 
@@ -304,8 +309,11 @@ test('encoder resolution is written to node 204 when asked for', () => {
   const wf = buildRunPayload(WORKFLOW, B, { prompt: 'x', images: [], inputResolution: 1536 });
   assert.equal(wf['204'].inputs.value, 1536);
   assert.equal(wf['204']._meta.title, 'Input Resolution');
-  // It feeds the text encoder, not the output size.
-  assert.deepEqual(WORKFLOW['5'].inputs.resolution, ['204', 0]);
+  // It feeds the text encoder(s), not the output size. The workflow moved the
+  // encoder to QwenImage21TextEncodeList nodes (229 live, 250 for the editor).
+  for (const encoder of ['229', '250']) {
+    assert.deepEqual(WORKFLOW[encoder].inputs.resolution, ['204', 0], `node ${encoder} should read 204`);
+  }
 });
 
 test('a blank encoder resolution leaves the workflow value alone', () => {
@@ -354,12 +362,76 @@ test('collectText falls back to files-only when there is no inline text', () => 
   assert.deepEqual(got, [{ node: '7', texts: [], files: [{ filename: 'p.txt' }] }]);
 });
 
-test('the SaveText node is fed by the same switch the text encoder reads', () => {
+test('the SaveText node is fed by the same wire the text encoder reads', () => {
   // This is the whole basis for labelling the capture honest: if 181 tapped a
   // different wire we would be showing a prompt the image was never made from.
-  assert.deepEqual(WORKFLOW['181'].inputs.text, ['178', 0]);
-  assert.deepEqual(WORKFLOW['5'].inputs.prompt, ['178', 0]);
+  // Both read node 176 "Prompt Enhance On/Off" directly now - the old routing
+  // switch (178) was removed from the workflow.
+  assert.deepEqual(WORKFLOW['181'].inputs.text, ['176', 0]);
+  assert.deepEqual(WORKFLOW['229'].inputs.prompts, ['176', 0]);
   assert.equal(WORKFLOW['181'].class_type, 'SaveText');
+});
+
+// ----------------------------------------------------- aspect + LoRA writes
+
+test('the aspect dropdown value is written to node 9 when suggestion is off', () => {
+  const wf = buildRunPayload(WORKFLOW, B, {
+    prompt: 'x',
+    images: [],
+    useSuggestedAspect: false,
+    aspectRatio: '16:9 (Widescreen)',
+  });
+  assert.equal(wf['9'].inputs.aspect_ratio, '16:9 (Widescreen)');
+  assert.equal(wf['233'].inputs.value, false);
+});
+
+test('suggested aspect throws node 233 and still records the dropdown choice', () => {
+  const wf = buildRunPayload(WORKFLOW, B, {
+    prompt: 'x',
+    images: [],
+    useSuggestedAspect: true,
+    aspectRatio: '2:3 (Portrait Photo)',
+  });
+  assert.equal(wf['233'].inputs.value, true);
+  // Nodes 234/235 ignore node 9 while 233 is on, so the combo value is only a
+  // fallback - but writing it means flipping the switch in ComfyUI still works.
+  assert.equal(wf['9'].inputs.aspect_ratio, '2:3 (Portrait Photo)');
+});
+
+test('suggested aspect is forced off without the enhancer to suggest one', () => {
+  // Node 240/241 take the suggestion from node 226, which only runs when node
+  // 176 passes. Asking for it with the enhancer off would silently keep whatever
+  // the editor last had.
+  const wf = buildRunPayload(WORKFLOW, B, {
+    prompt: 'x',
+    images: [],
+    promptEnhance: false,
+    useSuggestedAspect: true,
+    aspectRatio: '21:9 (Ultrawide)',
+  });
+  assert.equal(wf['233'].inputs.value, false);
+  assert.equal(wf['9'].inputs.aspect_ratio, '21:9 (Ultrawide)', 'the dropdown still applies');
+});
+
+test('the Consistency LoRA is written only when the job says something', () => {
+  assert.equal(buildRunPayload(WORKFLOW, B, { prompt: 'x', images: [] })['207'].inputs.value,
+    WORKFLOW['207'].inputs.value, 'unset must leave node 207 alone');
+  for (const consistency of [null, undefined]) {
+    assert.deepEqual(buildRunPayload(WORKFLOW, B, { prompt: 'x', images: [], consistency })['207'], WORKFLOW['207']);
+  }
+  assert.equal(buildRunPayload(WORKFLOW, B, { prompt: 'x', images: [], consistency: true })['207'].inputs.value, true);
+  assert.equal(buildRunPayload(WORKFLOW, B, { prompt: 'x', images: [], consistency: false })['207'].inputs.value, false);
+});
+
+test('every aspect we offer is one the workflow combo accepts', () => {
+  // A COMBO falls back to its first entry on an unknown value, so a typo in the
+  // list would quietly produce square images.
+  const sel = Object.values(WORKFLOW).find((n) => n.class_type === 'ResolutionSelector');
+  assert.ok(sel, 'expected a ResolutionSelector node');
+  for (const r of ASPECT_RATIOS) {
+    assert.ok(r.length > 0 && !r.includes(','), `${r} is not a plausible combo entry`);
+  }
+  assert.equal(ASPECT_RATIOS.length, 8, 'the workflow documents eight ratios');
 });
 
 // --------------------------------------------------------------- validation
@@ -377,6 +449,31 @@ test('inputResolution must be blank or a sane pixel size', () => {
   assert.equal(validateJob({ ...base, inputResolution: 'big' }).ok, false);
   // A bad value must never survive as a usable number.
   assert.equal(validateJob({ ...base, inputResolution: 0 }).inputResolution, null);
+});
+
+test('aspectRatio must be one the workflow combo actually offers', () => {
+  const base = { prompt: 'x', megapixels: 1, batch: 1, shuffle: 1 };
+  assert.equal(validateJob({ ...base, aspectRatio: '16:9 (Widescreen)' }).aspectRatio, '16:9 (Widescreen)');
+  assert.equal(validateJob({ ...base }).aspectRatio, '1:1 (Square)', 'a sensible default when none is sent');
+  assert.equal(validateJob({ ...base, aspectRatio: 'banana' }).ok, false);
+  assert.equal(validateJob({ ...base, aspectRatio: '16:9' }).ok, false, 'the node spells them out in full');
+});
+
+test('asking for a suggested aspect without the enhancer is downgraded, not rejected', () => {
+  const base = { prompt: 'x', megapixels: 1, batch: 1, shuffle: 1 };
+  assert.equal(validateJob({ ...base, useSuggestedAspect: true }).useSuggestedAspect, true);
+  const off = validateJob({ ...base, promptEnhance: false, useSuggestedAspect: true });
+  assert.equal(off.ok, true, 'a preference, not an error');
+  assert.equal(off.useSuggestedAspect, false, 'but it is not honoured');
+});
+
+test('consistency is tri-state: on, off, or leave node 207 alone', () => {
+  const base = { prompt: 'x', megapixels: 1, batch: 1, shuffle: 1 };
+  assert.equal(validateJob({ ...base }).consistency, null);
+  assert.equal(validateJob({ ...base, consistency: undefined }).consistency, null);
+  assert.equal(validateJob({ ...base, consistency: true }).consistency, true);
+  assert.equal(validateJob({ ...base, consistency: false }).consistency, false);
+  assert.equal(validateJob({ ...base, consistency: 'yes' }).consistency, false, 'anything truthy-but-not-true is off');
 });
 
 // --------------------------------------------------------------- validation

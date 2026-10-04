@@ -194,7 +194,14 @@ route('PUT', '/api/config', async (req, res) => {
   const patch = await readJson(req);
   delete patch.server; // rebinding the listener needs a restart
   const saved = saveConfig(patch);
-  json(res, 200, { config: saved, resolved: { downloadDir: paths().downloadDir, workflow: paths().workflow } });
+  json(res, 200, {
+    config: saved,
+    // Names the server does not recognise are dropped on purpose (see
+    // mergeConfig). Report them so the UI can say so instead of showing a
+    // cheerful "saved" next to a binding that never took effect.
+    staleBindings: saved.staleBindings ?? [],
+    resolved: { downloadDir: paths().downloadDir, workflow: paths().workflow },
+  });
 });
 
 route('POST', '/api/config/validate', async (req, res) => {
@@ -266,6 +273,22 @@ route('GET', '/api/uploads/:id', async (req, res, url, { id }) => {
 route('GET', '/api/uploads', async (req, res) => json(res, 200, { uploads: listUploads() }));
 
 route('POST', '/api/generate', async (req, res) => {
+  // Refuse up front if a binding points at a node the workflow no longer has.
+  // Without this the job is accepted, sits in the queue, and every run fails the
+  // same cryptic "node 43 is not in the workflow" - which is how a stale node id
+  // saved in Settings can go unnoticed for days. Failing here names the setting.
+  const broken = validateBindings(state.config.bindings).filter((b) => !b.ok);
+  if (broken.length) {
+    const err = new Error(
+      `binding problem - fix it in Settings: ${broken
+        .map((b) => `${b.binding}${b.slot ? ` #${b.slot}` : ''}: ${b.reason}`)
+        .join('; ')}`,
+    );
+    err.status = 400;
+    err.errors = broken.map((b) => b.reason);
+    err.bindings = broken;
+    throw err;
+  }
   const job = runner.enqueue(await readJson(req));
   json(res, 202, job);
 });
@@ -460,7 +483,11 @@ const server = http.createServer(async (req, res) => {
     const status = e.status || 500;
     if (status >= 500) console.error('[server]', req.method, url.pathname, e);
     if (!res.headersSent) {
-      json(res, status, { error: e.message, ...(e.errors ? { errors: e.errors } : {}) });
+      json(res, status, {
+        error: e.message,
+        ...(e.errors ? { errors: e.errors } : {}),
+        ...(e.bindings ? { bindings: e.bindings } : {}),
+      });
     }
   }
 });

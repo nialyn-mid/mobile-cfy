@@ -23,6 +23,7 @@ const api = async (path, opts = {}) => {
   if (!res.ok) {
     const e = new Error(body?.error || `${res.status} ${res.statusText}`);
     e.errors = body?.errors;
+    e.bindings = body?.bindings;
     e.status = res.status;
     throw e;
   }
@@ -205,10 +206,12 @@ function useAsInput(entry) {
 }
 
 function syncEnhanceHint() {
-  const hasImages = state.slots.some(Boolean);
-  $('enhance').disabled = hasImages;
+  // Reference images no longer bypass the enhancer: node 226 reads the images
+  // itself, so an image job is enhanced like any other. The only thing the
+  // enhancer switches off is the suggested aspect, and syncAspectUi owns that.
+  const hasImages = state.slots.filter(Boolean).length;
   $('enhanceHint').textContent = hasImages
-    ? 'bypassed in reference mode - the prompt goes to the raw node'
+    ? 'reads the reference images too'
     : 'runs the Qwen-VL enhancer';
 }
 
@@ -293,14 +296,40 @@ $('helpResolution').onclick = (e) => {
   toast('Pixel size fed to the Qwen text encoder (workflow node 204), not the final image size - that stays on Megapixels. Blank leaves the workflow at its own default of 1024. Raising it can help the encoder read fine detail in reference images; it costs VRAM and time.');
 };
 
+$('helpAspect').onclick = (e) => {
+  e.preventDefault();
+  toast('The prompt enhancer returns an aspect ratio of its own. Turn this on to use it - it needs Prompt enhance, because without the enhancer there is nothing to suggest. Turned off, the dropdown below is what node 9 uses.');
+};
+
+// The aspect dropdown only has meaning when the enhancer is NOT choosing.
+// Node 233 is forced off without the enhancer server-side too; hiding it here
+// keeps the page from showing a switch that would quietly do nothing.
+function syncAspectUi() {
+  const suggested = $('useSuggestedAspect').checked;
+  const available = suggested && $('enhance').checked;
+  $('aspectField').hidden = available;
+  $('useSuggestedAspect').disabled = !$('enhance').checked;
+  $('aspectHint').textContent = !$('enhance').checked
+    ? 'needs Prompt enhance'
+    : suggested ? 'the enhancer picks the shape' : 'off - the dropdown below is used';
+  if ($('useSuggestedAspect').disabled) $('useSuggestedAspect').checked = false;
+}
+$('useSuggestedAspect').addEventListener('change', () => { syncAspectUi(); updateRunMath(); });
+$('enhance').addEventListener('change', () => { syncAspectUi(); syncEnhanceHint(); updateRunMath(); });
+
 // -------------------------------------------------------------- run summary
 function updateRunMath() {
   const batch = Math.max(1, parseInt($('batch').value, 10) || 1);
   const shuffle = Math.max(1, parseInt($('shuffle').value, 10) || 1);
   const count = state.slots.filter(Boolean).length;
   const parts = [`${batch * shuffle} run(s)`];
+  const shape = $('useSuggestedAspect').checked && $('enhance').checked
+    ? 'enhancer picks the aspect'
+    : $('aspectRatio').value.split(' ')[0];
+  parts.push(shape);
+  if ($('consistency').checked) parts.push('consistency LoRA');
   if (count) {
-    parts.push(`image count ${count}`, 'enhancer bypassed');
+    parts.push(`${count} reference image(s) fed to the enhancer`);
   } else {
     // Node 68 decides whether the workflow re-enhances or reuses its memorised
     // prompt, so the wording of every image depends on this, not just the seed.
@@ -310,8 +339,8 @@ function updateRunMath() {
   }
   $('runMath').textContent = parts.join(' · ');
 }
-for (const id of ['batch', 'shuffle', 'refresh']) $(id).addEventListener('input', updateRunMath);
-$('refresh').addEventListener('change', updateRunMath);
+for (const id of ['batch', 'shuffle', 'refresh', 'aspectRatio', 'consistency']) $(id).addEventListener('input', updateRunMath);
+for (const id of ['batch', 'shuffle', 'refresh', 'aspectRatio', 'consistency']) $(id).addEventListener('change', updateRunMath);
 
 // ---------------------------------------------------------- remembered form
 // Toggles and run settings survive a reload. The prompt itself does NOT - that
@@ -319,7 +348,28 @@ $('refresh').addEventListener('change', updateRunMath);
 // be worse than an empty box. Reference images are not remembered either: the
 // uploads they point at are one-shot handles from a previous session.
 const FORM_KEY = 'mcfy.form.v1';
-const FORM_IDS = ['enhance', 'turbo', 'collect', 'steps', 'inputResolution', 'megapixels', 'batch', 'shuffle', 'refresh'];
+const FORM_IDS = [
+  'enhance', 'turbo', 'consistency', 'collect', 'steps', 'inputResolution',
+  'megapixels', 'batch', 'shuffle', 'refresh', 'useSuggestedAspect', 'aspectRatio',
+];
+
+// The workflow's own combo values for node 9 "Resolution Selector". A COMBO
+// rejects anything else by falling back to its first entry, so this list is the
+// only place the page invents text for it.
+const ASPECT_RATIOS = [
+  '1:1 (Square)',
+  '2:3 (Portrait Photo)',
+  '3:2 (Photo)',
+  '3:4 (Portrait Standard)',
+  '4:3 (Standard)',
+  '9:16 (Portrait Widescreen)',
+  '16:9 (Widescreen)',
+  '21:9 (Ultrawide)',
+];
+{
+  const sel = $('aspectRatio');
+  sel.innerHTML = ASPECT_RATIOS.map((r) => `<option value="${escapeHtml(r)}">${escapeHtml(r)}</option>`).join('');
+}
 
 function saveForm() {
   const out = {};
@@ -374,9 +424,12 @@ $('generate').onclick = async () => {
     shuffle: parseInt($('shuffle').value, 10) || undefined,
     promptEnhance: $('enhance').checked,
     turbo: $('turbo').checked,
+    consistency: $('consistency').checked,
     collectImages: $('collect').checked,
     stepsOverride: stepsRaw === '' ? null : parseInt(stepsRaw, 10),
     inputResolution: resRaw === '' ? null : parseInt(resRaw, 10),
+    useSuggestedAspect: $('useSuggestedAspect').checked,
+    aspectRatio: $('aspectRatio').value,
     refresh: $('refresh').value,
     slots: state.slots,
   };
@@ -396,7 +449,7 @@ $('generate').onclick = async () => {
     $('prompt').focus();
     if (hadRefs) toast('references cleared');
   } catch (e) {
-    showError(e.errors ? e.errors.join('\n') : e.message);
+    if (!showBindingError(e)) showError(e.errors ? e.errors.join('\n') : e.message);
   }
 };
 
@@ -799,9 +852,14 @@ function renderHistory() {
     };
     chip(`enhance ${s.promptEnhance === false ? 'off' : 'on'}`, s.promptEnhance !== false);
     chip(s.turbo ? 'turbo' : 'full model', s.turbo);
+    if (s.consistency) chip('consistency LoRA', true);
     if (s.stepsOverride) chip(`${s.stepsOverride} steps`, true);
     if (s.inputResolution) chip(`${s.inputResolution}px encoder`, true);
     chip(fmtMP(s.megapixels), false);
+    chip(
+      s.useSuggestedAspect ? 'aspect: suggested' : `aspect: ${(s.aspectRatio ?? '1:1 (Square)').split(' ')[0]}`,
+      s.useSuggestedAspect === true,
+    );
     chip(`${s.batch ?? 1}×${s.shuffle ?? 1} shuffle`, false);
     if (s.refresh === 'everyRun') chip('refresh every run', true);
     if (s.collectImages === false) chip('no downloads', false);
@@ -975,6 +1033,11 @@ function restoreHistory(entry) {
   $('turbo').checked = s.turbo === true;
   $('collect').checked = s.collectImages !== false;
   $('enhance').checked = s.promptEnhance !== false;
+  $('consistency').checked = s.consistency === true;
+  $('useSuggestedAspect').checked = s.useSuggestedAspect === true && s.promptEnhance !== false;
+  if (ASPECT_RATIOS.includes(s.aspectRatio)) $('aspectRatio').value = s.aspectRatio;
+  syncAspectUi();
+  syncEnhanceHint();
 
   let restored = 0;
   let lost = 0;
@@ -995,6 +1058,7 @@ function restoreHistory(entry) {
   showError(null);
   document.querySelector('.tabbtn[data-tab="generate"]').click();  // re-sizes the prompt box
   window.scrollTo(0, 0);
+  updateRunMath();
   toast(lost ? `loaded - ${lost} reference image(s) are gone` : 'loaded into Generate');
 }
 
@@ -1270,7 +1334,10 @@ const BIND_LABELS = {
   stepsTurbo: 'Steps (turbo)',
   stepsFull: 'Steps (full)',
   seed: 'Seed',
-  megapixels: 'Megapixels',
+  megapixels: 'Megapixels (float)',
+  useSuggestedAspect: 'Use suggested aspect',
+  aspectRatio: 'Aspect ratio (combo)',
+  consistencyLora: 'Consistency LoRA',
   inputResolution: 'Encoder resolution',
   enhanceSeed: 'Enhancer seed',
   images: 'Reference images',
@@ -1334,17 +1401,44 @@ function collectBindings() {
   return out;
 }
 
+/**
+ * Save the binding rows, then paint the result of the save, not the result of the
+ * typing.
+ *
+ * This is the fix for "I changed a node id and pressed save and nothing happened":
+ * the server silently drops binding names it does not know and reports the ones
+ * it could not resolve, so re-rendering from the server's own answer - and saying
+ * so out loud when something did not stick - is the only way the page can tell the
+ * truth about what the next run will actually do.
+ */
 $('saveBindings').onclick = async () => {
-  $('bindMsg').textContent = 'saving…';
+  const msg = $('bindMsg');
+  msg.textContent = 'saving…';
+  msg.classList.remove('bad');
   try {
     const body = await api('/api/config', { method: 'PUT', body: JSON.stringify({ bindings: collectBindings() }) });
     state.cfg = body.config;
-    $('bindMsg').textContent = 'saved';
+    renderBindings(body.config.bindings ?? {});
+    const dropped = body.staleBindings ?? [];
     await checkBindings();
-  } catch (e) { $('bindMsg').textContent = e.message; }
+    if (dropped.length) {
+      msg.textContent = `saved, but ignored unknown setting(s): ${dropped.join(', ')}`;
+      msg.classList.add('bad');
+      toast('some settings were not recognised and were not saved');
+    }
+  } catch (e) { msg.textContent = e.message; }
 };
 
 $('checkBindings').onclick = checkBindings;
+
+/** 400 from /api/generate when a binding is broken - say where to look. */
+function showBindingError(err) {
+  const bad = (err.bindings ?? []).map((b) => `${b.binding}${b.slot ? ` #${b.slot}` : ''}: ${b.reason}`);
+  if (!bad.length) return false;
+  showError(`${err.message}\nFix it in the Settings tab.`);
+  toast('a node id in Settings does not match the workflow');
+  return true;
+}
 
 async function checkBindings() {
   const msg = $('bindMsg');
@@ -1372,7 +1466,8 @@ async function checkBindings() {
       else if (rec.ok) mark.innerHTML = `<span class="ok">✓</span> <b>${escapeHtml(rec.title ?? '')}</b> ${escapeHtml(rec.classType ?? '')}`;
       else mark.innerHTML = `<span class="no">✗</span> <b>${escapeHtml(rec.reason ?? '')}</b>`;
     }
-    msg.textContent = ok ? 'all bindings ok' : `${bad} problem(s)`;
+    msg.textContent = ok ? 'all bindings ok' : `${bad} problem(s) - the Generate button will refuse to run`;
+    msg.classList.toggle('bad', !ok);
     if (state.cfg) renderBindings(state.cfg.bindings);
   } catch (e) { msg.textContent = e.message; }
 }
@@ -1454,6 +1549,8 @@ loadCollapsed();
 // HTML defaults and then jumps to what the user actually left set.
 const hadSavedForm = restoreForm();
 renderSlots();
+syncAspectUi();
+syncEnhanceHint();
 updateRunMath();
 autoGrow($('prompt'));
 renderQueue();
@@ -1482,6 +1579,13 @@ document.addEventListener('visibilitychange', () => {
     if (d.shuffle) $('shuffle').value = d.shuffle;
     if (d.shuffleRefresh) $('refresh').value = d.shuffleRefresh;
     if (d.inputResolution) $('inputResolution').value = d.inputResolution;
+    if (ASPECT_RATIOS.includes(d.aspectRatio)) $('aspectRatio').value = d.aspectRatio;
+    $('useSuggestedAspect').checked = d.useSuggestedAspect === true && d.promptEnhance !== false;
+    $('turbo').checked = d.turbo === true;
+    // null means "leave node 207 alone", which a checkbox cannot show, so a
+    // null default starts it off rather than pretending it is off.
+    $('consistency').checked = d.consistency === true || d.consistency == null;
+    syncAspectUi();
     updateRunMath();
   } catch { /* the server may still be booting */ }
 })();

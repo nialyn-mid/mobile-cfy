@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sanitizeFilename, uniquePath, slugify, timestamp, renderTemplate, downloadImage } from '../lib/download.js';
+import { DEFAULTS } from '../lib/config.js';
 
 test('sanitizeFilename strips path separators and collapses whitespace', () => {
   assert.equal(sanitizeFilename('a/b\\c.png'), 'a_b_c.png');
@@ -33,6 +34,31 @@ test('renderTemplate fills every token', () => {
     prompt: 'a cat', seed: 42, index: 1, node: 8, group: 0, filename: 'qwen-image-2.1_S8_00001_.png',
   });
   assert.match(out, /^\d{6}-\d{6}_a-cat_S8_42_1_8_0$/);
+});
+
+test('renderTemplate counts shuffle, batch and image separately', () => {
+  // The default name is the moment plus those three counters, so they have to be
+  // independent - {index} alone is the global run counter and cannot tell a
+  // second shuffle group from a third image of the first.
+  const ctx = { prompt: 'x', seed: 7, index: 5, group: 2, batch: 1, img: 1, node: 8 };
+  assert.equal(renderTemplate('{shuffle}', ctx), '2');
+  assert.equal(renderTemplate('{batch}', ctx), '1');
+  assert.equal(renderTemplate('{img}', ctx), '1');
+  assert.equal(renderTemplate('s{shuffle}b{batch}i{img}', ctx), 's2b1i1');
+});
+
+test('the new counters fall back to the old ones when a caller only has those', () => {
+  const ctx = { index: 4, group: 1 };
+  assert.equal(renderTemplate('{shuffle}', ctx), '1', 'shuffle falls back to group');
+  assert.equal(renderTemplate('{batch}', ctx), '4', 'batch falls back to index');
+  assert.equal(renderTemplate('{img}', ctx), '0');
+});
+
+test('the shipped default template is the timestamp plus the three counters', () => {
+  const out = renderTemplate(DEFAULTS.filenameTemplate, {
+    prompt: 'a cat', seed: 42, index: 3, group: 1, batch: 0, img: 1,
+  });
+  assert.match(out, /^\d{6}-\d{6}_s1b0i1$/);
 });
 
 test('renderTemplate keeps an unknown token instead of dropping it', () => {
