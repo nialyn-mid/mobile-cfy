@@ -61,6 +61,41 @@ function showError(msg) {
   el.hidden = false;
 }
 
+/**
+ * Copy text to the clipboard.
+ *
+ * navigator.clipboard only exists in a SECURE CONTEXT, and this page is normally
+ * opened over plain http on a LAN IP from the phone's browser - where it is
+ * simply undefined. The textarea + execCommand path is the old trick that still
+ * works there, so it is the primary implementation rather than a fallback.
+ */
+async function copyText(text) {
+  const value = String(text ?? '');
+  if (!value) return false;
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(value);
+      return true;
+    }
+  } catch { /* fall through - a denied clipboard prompt is not fatal */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value;
+    ta.setAttribute('readonly', '');
+    // Off-screen but still focusable; display:none would make the selection,
+    // and therefore the copy, fail.
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+    document.body.append(ta);
+    ta.select();
+    ta.setSelectionRange(0, value.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
 async function refreshHealth() {
   const dot = $('healthDot');
   const text = $('healthText');
@@ -253,6 +288,11 @@ $('helpRefresh').onclick = (e) => {
   toast("'Once per group' throws the override switch on run 1 only, so the workflow enhances the prompt once and every later image varies by seed. 'Every run' re-enhances each time - slower, but each image gets its own wording.");
 };
 
+$('helpResolution').onclick = (e) => {
+  e.preventDefault();
+  toast('Pixel size fed to the Qwen text encoder (workflow node 204), not the final image size - that stays on Megapixels. Blank leaves the workflow at its own default of 1024. Raising it can help the encoder read fine detail in reference images; it costs VRAM and time.');
+};
+
 // -------------------------------------------------------------- run summary
 function updateRunMath() {
   const batch = Math.max(1, parseInt($('batch').value, 10) || 1);
@@ -279,7 +319,7 @@ $('refresh').addEventListener('change', updateRunMath);
 // be worse than an empty box. Reference images are not remembered either: the
 // uploads they point at are one-shot handles from a previous session.
 const FORM_KEY = 'mcfy.form.v1';
-const FORM_IDS = ['enhance', 'turbo', 'collect', 'steps', 'megapixels', 'batch', 'shuffle', 'refresh'];
+const FORM_IDS = ['enhance', 'turbo', 'collect', 'steps', 'inputResolution', 'megapixels', 'batch', 'shuffle', 'refresh'];
 
 function saveForm() {
   const out = {};
@@ -326,6 +366,7 @@ $('generate').onclick = async () => {
   if (!prompt) { showError('prompt is empty'); $('prompt').focus(); return; }
 
   const stepsRaw = $('steps').value.trim();
+  const resRaw = $('inputResolution').value.trim();
   const body = {
     prompt,
     megapixels: parseFloat($('megapixels').value) || undefined,
@@ -335,6 +376,7 @@ $('generate').onclick = async () => {
     turbo: $('turbo').checked,
     collectImages: $('collect').checked,
     stepsOverride: stepsRaw === '' ? null : parseInt(stepsRaw, 10),
+    inputResolution: resRaw === '' ? null : parseInt(resRaw, 10),
     refresh: $('refresh').value,
     slots: state.slots,
   };
@@ -758,6 +800,7 @@ function renderHistory() {
     chip(`enhance ${s.promptEnhance === false ? 'off' : 'on'}`, s.promptEnhance !== false);
     chip(s.turbo ? 'turbo' : 'full model', s.turbo);
     if (s.stepsOverride) chip(`${s.stepsOverride} steps`, true);
+    if (s.inputResolution) chip(`${s.inputResolution}px encoder`, true);
     chip(fmtMP(s.megapixels), false);
     chip(`${s.batch ?? 1}×${s.shuffle ?? 1} shuffle`, false);
     if (s.refresh === 'everyRun') chip('refresh every run', true);
@@ -786,9 +829,133 @@ function renderHistory() {
       card.append(strip);
     }
 
+    // --- what the text encoder was actually handed ---------------------------
+    // Node 181 "Save Text" sits on the same wire as the text encoder, so this is
+    // the real prompt behind the images - not what we submitted. There is one per
+    // run, because every time the enhancer refreshes it re-words differently, so
+    // a batch of six can legitimately come back six ways. Outer box = all of
+    // them, inner box = one run's wording.
+    const captures = entry.promptTexts ?? [];
+    if (captures.length) {
+      const box = document.createElement('div');
+      box.className = 'hrow-textbox';
+
+      const bar = document.createElement('div');
+      bar.className = 'hrow-textbar';
+
+      const allRaw = captures.every((c) => c.source === 'raw');
+      const tag = document.createElement('span');
+      tag.className = allRaw ? 'chip warn' : 'chip on';
+      tag.textContent = allRaw ? 'raw prompt (enhancer bypassed)' : 'captured prompts';
+      bar.append(tag);
+
+      const count = document.createElement('span');
+      count.className = 'hrow-textcount';
+      count.textContent = captures.length === 1 ? '1' : String(captures.length);
+      count.title = `${captures.length} capture${captures.length > 1 ? 's' : ''}`;
+      bar.append(count);
+
+      const spacer = document.createElement('span');
+      spacer.className = 'flex1';
+      bar.append(spacer);
+
+      const mkBtn = (label, title, fn, extraClass) => {
+        const b = document.createElement('button');
+        b.className = extraClass ? `mini ${extraClass}` : 'mini';
+        b.type = 'button';
+        b.textContent = label;
+        b.title = title;
+        b.onclick = (ev) => { ev.stopPropagation(); fn(); };
+        return b;
+      };
+
+      // One collapsible per capture, nested inside this one.
+      const list = document.createElement('div');
+      list.className = 'hrow-textlist';
+      for (const cap of captures) {
+        const sub = document.createElement('div');
+        sub.className = 'hrow-sub';
+
+        const subBar = document.createElement('div');
+        subBar.className = 'hrow-subbar';
+
+        const subTag = document.createElement('span');
+        subTag.className = cap.source === 'raw' ? 'chip warn' : 'chip on';
+        subTag.textContent = cap.source === 'raw' ? 'raw prompt' : 'enhanced prompt';
+        subBar.append(subTag);
+
+        const label = document.createElement('span');
+        label.className = 'hrow-sublabel';
+        label.textContent = cap.runIndex > 0 ? `run ${cap.runIndex + 1}` : 'run 1';
+        if (cap.seed !== null && cap.seed !== undefined) {
+          label.textContent += ` · seed ${cap.seed}`;
+        }
+        subBar.append(label);
+
+        const subSpacer = document.createElement('span');
+        subSpacer.className = 'flex1';
+        subBar.append(subSpacer);
+
+        const subBody = document.createElement('pre');
+        subBody.className = 'hrow-text';
+        subBody.textContent = cap.text;
+
+        const subToggle = mkBtn('▾', 'show this prompt', () => {
+          const open = sub.classList.toggle('open');
+          subToggle.textContent = open ? '▴' : '▾';
+          subBody.hidden = !open;
+        }, 'hrow-caret');
+
+        subBar.append(
+          mkBtn('copy', 'copy to clipboard', async () => {
+            toast(await copyText(cap.text) ? 'prompt copied' : 'copy blocked by the browser');
+          }),
+          mkBtn('use as prompt', 'put this in the prompt box and turn the enhancer off', () => {
+            useEnhancedAsPrompt(cap.text);
+          }),
+          subToggle,
+        );
+
+        subBody.hidden = true;
+        sub.append(subBar, subBody);
+        list.append(sub);
+      }
+
+      const toggle = mkBtn('▾ show', 'expand the captured prompts', () => {
+        const open = box.classList.toggle('open');
+        toggle.textContent = open ? '▴ hide' : '▾ show';
+        list.hidden = !open;
+      }, 'hrow-toggle');
+
+      bar.append(toggle);
+
+      list.hidden = true;
+      box.append(bar, list);
+      card.append(box);
+    }
+
     card.onclick = () => restoreHistory(entry);
     wrap.append(card);
   }
+}
+
+/**
+ * Adopt the workflow's enhanced wording as the new raw prompt.
+ *
+ * This is the whole point of capturing it: re-wording is a lottery, so once a run
+ * comes back with wording you like, the sane follow-up is to keep that exact text
+ * and stop paying for the enhancer on every future run.
+ */
+function useEnhancedAsPrompt(text) {
+  if (!text) return;
+  const box = $('prompt');
+  box.value = text;
+  autoGrow(box);
+  $('enhance').checked = false;
+  saveForm();
+  document.querySelector('.tabbtn[data-tab="generate"]').click();
+  window.scrollTo(0, 0);
+  toast('enhanced prompt loaded - enhancer turned off');
 }
 
 /**
@@ -804,6 +971,7 @@ function restoreHistory(entry) {
   if (s.shuffle) $('shuffle').value = s.shuffle;
   if (s.refresh) $('refresh').value = s.refresh;
   $('steps').value = s.stepsOverride ?? '';
+  $('inputResolution').value = s.inputResolution ?? '';
   $('turbo').checked = s.turbo === true;
   $('collect').checked = s.collectImages !== false;
   $('enhance').checked = s.promptEnhance !== false;
@@ -1086,6 +1254,7 @@ async function loadSettings() {
     $('cfgDl').value = body.config.downloadDir ?? '';
     $('cfgTpl').value = body.config.filenameTemplate ?? '';
     $('cfgNodes').value = (body.config.collectNodes ?? []).join(', ');
+    $('cfgTextNodes').value = (body.config.promptTextNodes ?? []).join(', ');
     $('envNote').textContent = `token file: ${body.envFile}`;
     renderBindings(body.config.bindings ?? {});
   } catch (e) { toast(e.message); }
@@ -1102,6 +1271,7 @@ const BIND_LABELS = {
   stepsFull: 'Steps (full)',
   seed: 'Seed',
   megapixels: 'Megapixels',
+  inputResolution: 'Encoder resolution',
   enhanceSeed: 'Enhancer seed',
   images: 'Reference images',
 };
@@ -1218,6 +1388,7 @@ $('saveConfig').onclick = async () => {
     downloadDir: $('cfgDl').value.trim(),
     filenameTemplate: $('cfgTpl').value.trim(),
     collectNodes: $('cfgNodes').value.split(',').map((s) => s.trim()).filter(Boolean),
+    promptTextNodes: $('cfgTextNodes').value.split(',').map((s) => s.trim()).filter(Boolean),
   };
   try {
     const body = await api('/api/config', { method: 'PUT', body: JSON.stringify(patch) });
@@ -1310,6 +1481,7 @@ document.addEventListener('visibilitychange', () => {
     if (d.batch) $('batch').value = d.batch;
     if (d.shuffle) $('shuffle').value = d.shuffle;
     if (d.shuffleRefresh) $('refresh').value = d.shuffleRefresh;
+    if (d.inputResolution) $('inputResolution').value = d.inputResolution;
     updateRunMath();
   } catch { /* the server may still be booting */ }
 })();

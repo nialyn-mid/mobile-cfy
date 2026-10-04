@@ -1,13 +1,4 @@
 {
-  "1": {
-    "inputs": {
-      "unet_name": "qwen_image_2.1_Q4_K_M.gguf"
-    },
-    "class_type": "UnetLoaderGGUF",
-    "_meta": {
-      "title": "Unet Loader (GGUF)"
-    }
-  },
   "2": {
     "inputs": {
       "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
@@ -48,11 +39,14 @@
   "5": {
     "inputs": {
       "prompt": [
-        "155",
+        "178",
         0
       ],
       "negative_prompt": "",
-      "resolution": 1024,
+      "resolution": [
+        "204",
+        0
+      ],
       "clip": [
         "10",
         1
@@ -144,7 +138,7 @@
         "strength": 0.4
       },
       "lora_4": {
-        "on": true,
+        "on": false,
         "lora": "qwen-image-2.1-uncensored-lora.safetensors",
         "strength": 1
       },
@@ -170,7 +164,7 @@
   },
   "11": {
     "inputs": {
-      "image": "png-clipart-planet-earth-earth-icon-earth-globe-world-thumbnail.png"
+      "image": "S7_00040_.png"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -279,7 +273,7 @@
       ],
       "return_with_leftover_noise": "enable",
       "model": [
-        "10",
+        "174",
         0
       ],
       "positive": [
@@ -324,7 +318,7 @@
       ],
       "return_with_leftover_noise": "enable",
       "model": [
-        "10",
+        "174",
         0
       ],
       "positive": [
@@ -336,7 +330,7 @@
         0
       ],
       "latent_image": [
-        "19",
+        "203",
         0
       ]
     },
@@ -369,7 +363,7 @@
       ],
       "return_with_leftover_noise": "disable",
       "model": [
-        "10",
+        "174",
         0
       ],
       "positive": [
@@ -430,7 +424,7 @@
       ],
       "return_with_leftover_noise": "disable",
       "model": [
-        "10",
+        "174",
         0
       ],
       "positive": [
@@ -453,7 +447,7 @@
   },
   "37": {
     "inputs": {
-      "seed": 1106574252542142
+      "seed": 213678897324626
     },
     "class_type": "SeedNode",
     "_meta": {
@@ -469,26 +463,9 @@
       "title": "Input Prompt"
     }
   },
-  "43": {
-    "inputs": {
-      "switch": false,
-      "on_false": [
-        "44",
-        0
-      ],
-      "on_true": [
-        "48",
-        0
-      ]
-    },
-    "class_type": "ComfySwitchNode",
-    "_meta": {
-      "title": "Prompt Enhance On/Off"
-    }
-  },
   "44": {
     "inputs": {
-      "value": "anime girl"
+      "value": "anime-styled illustration of an anime girl"
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
@@ -511,7 +488,7 @@
   "48": {
     "inputs": {
       "source": [
-        "59",
+        "178",
         0
       ]
     },
@@ -536,7 +513,10 @@
       "english_output": false,
       "device": "auto",
       "keep_model_loaded": false,
-      "seed": 3754157339,
+      "seed": [
+        "37",
+        0
+      ],
       "keep_last_prompt": [
         "70",
         0
@@ -701,7 +681,10 @@
         0
       ],
       "negative_prompt": "",
-      "resolution": 1024,
+      "resolution": [
+        "204",
+        0
+      ],
       "clip": [
         "82",
         0
@@ -721,6 +704,10 @@
       "images.image_4": [
         "139",
         0
+      ],
+      "vae": [
+        "3",
+        0
       ]
     },
     "class_type": "TextEncodeQwenImage21",
@@ -731,7 +718,7 @@
   "73": {
     "inputs": {
       "string_a": [
-        "155",
+        "178",
         0
       ],
       "string_b": [
@@ -787,8 +774,8 @@
         0
       ],
       "tt_value": [
-        "10",
-        1
+        "173",
+        0
       ],
       "ff_value": [
         "84",
@@ -971,7 +958,7 @@
         0
       ],
       "ff_value": [
-        "10",
+        "174",
         0
       ]
     },
@@ -1073,7 +1060,7 @@
         0
       ],
       "ff_value": [
-        "1",
+        "183",
         0
       ]
     },
@@ -1084,7 +1071,7 @@
   },
   "147": {
     "inputs": {
-      "value": true
+      "value": false
     },
     "class_type": "PrimitiveBoolean",
     "_meta": {
@@ -1136,26 +1123,6 @@
     "class_type": "ComfySwitchNode",
     "_meta": {
       "title": "If/Else Switch"
-    }
-  },
-  "155": {
-    "inputs": {
-      "switch": [
-        "165",
-        0
-      ],
-      "on_false": [
-        "43",
-        0
-      ],
-      "on_true": [
-        "44",
-        0
-      ]
-    },
-    "class_type": "ComfySwitchNode",
-    "_meta": {
-      "title": "Disable If Image"
     }
   },
   "158": {
@@ -1310,6 +1277,240 @@
     "class_type": "CyclistCompare",
     "_meta": {
       "title": "Compare Anything"
+    }
+  },
+  "172": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": false,
+        "lora": null,
+        "strength": 0.8
+      },
+      "lora_2": {
+        "on": false,
+        "lora": null,
+        "strength": 0.6
+      },
+      "lora_3": {
+        "on": false,
+        "lora": null,
+        "strength": 0.4
+      },
+      "lora_4": {
+        "on": true,
+        "lora": "qwen-image-2.1-uncensored-lora.safetensors",
+        "strength": 1
+      },
+      "lora_5": {
+        "on": true,
+        "lora": "Qwen%20Image%202.1%E5%8E%BB%E9%99%A4ai%2B%E5%85%89%E5%BD%B1%E4%BC%98%E5%8C%96v5.safetensors",
+        "strength": 0.5
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "146",
+        0
+      ],
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "173": {
+    "inputs": {
+      "switch": [
+        "147",
+        0
+      ],
+      "on_true": [
+        "10",
+        1
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "174": {
+    "inputs": {
+      "switch": [
+        "147",
+        0
+      ],
+      "on_false": [
+        "10",
+        0
+      ],
+      "on_true": [
+        "172",
+        0
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "176": {
+    "inputs": {
+      "cond": false,
+      "tt_value": [
+        "59",
+        0
+      ],
+      "ff_value": [
+        "44",
+        0
+      ]
+    },
+    "class_type": "ImpactConditionalBranch",
+    "_meta": {
+      "title": "Prompt Enhance On/Off"
+    }
+  },
+  "178": {
+    "inputs": {
+      "select": [
+        "180",
+        0
+      ],
+      "sel_mode": false,
+      "input1": [
+        "176",
+        0
+      ],
+      "input2": [
+        "44",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "179": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "158",
+        0
+      ],
+      "int_2": 1
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "180": {
+    "inputs": {
+      "operation": "min",
+      "int_1": [
+        "179",
+        0
+      ],
+      "int_2": 2
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "181": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "format": "txt",
+      "text": [
+        "178",
+        0
+      ]
+    },
+    "class_type": "SaveText",
+    "_meta": {
+      "title": "Save Text"
+    }
+  },
+  "183": {
+    "inputs": {
+      "unet_name": "qwen-image-2.1-UC-Q4_K_M.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "190": {
+    "inputs": {
+      "input1": [
+        "195",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2Int",
+    "_meta": {
+      "title": "Convert to Int"
+    }
+  },
+  "191": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "190",
+        0
+      ],
+      "int_2": 1
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "195": {
+    "inputs": {
+      "input1": [
+        "147",
+        0
+      ]
+    },
+    "class_type": "LogicGateInvertBasic",
+    "_meta": {
+      "title": "Invert Basic"
+    }
+  },
+  "203": {
+    "inputs": {
+      "select": [
+        "191",
+        0
+      ],
+      "sel_mode": false,
+      "input": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "ImpactInversedSwitch",
+    "_meta": {
+      "title": "Inversed Switch (Any)"
+    }
+  },
+  "204": {
+    "inputs": {
+      "value": 1024
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Input Resolution"
     }
   }
 }

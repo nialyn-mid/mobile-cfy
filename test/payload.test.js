@@ -10,6 +10,7 @@ import {
   resolveImageSlots,
   buildRunPayload,
   collectImages,
+  collectText,
   validateJob,
   normalizeSlots,
   setBinding,
@@ -74,15 +75,15 @@ test('prompt routing follows the workflow node 155 rule', () => {
 test('enhance on, no image: text goes to node 41 and the gate opens', () => {
   const wf = buildRunPayload(WORKFLOW, B, { prompt: 'a cat', promptEnhance: true, images: [] });
   assert.equal(wf['41'].inputs.value, 'a cat');
-  assert.equal(wf['43'].inputs.switch, true);
+  assert.equal(wf['176'].inputs.cond, true);
   assert.equal(wf['158'].inputs.value, 0, 'no images means Image Count 0');
   assert.deepEqual(wf['44'], WORKFLOW['44'], 'node 44 must be left untouched');
 });
 
-test('enhance off: text goes to node 44 and node 43 closes', () => {
+test('enhance off: text goes to node 44 and node 176 closes', () => {
   const wf = buildRunPayload(WORKFLOW, B, { prompt: 'a cat', promptEnhance: false, images: [] });
   assert.equal(wf['44'].inputs.value, 'a cat');
-  assert.equal(wf['43'].inputs.switch, false);
+  assert.equal(wf['176'].inputs.cond, false);
   assert.deepEqual(wf['41'], WORKFLOW['41'], 'node 41 must be left untouched');
 });
 
@@ -93,8 +94,17 @@ test('an attached image forces node 44 even when enhance is on', () => {
     images: ['ref_a.png'],
   });
   assert.equal(wf['44'].inputs.value, 'a cat');
-  assert.equal(wf['43'].inputs.switch, false);
+  assert.equal(wf['176'].inputs.cond, false, 'the enhancer must not run for an image job');
   assert.equal(wf['158'].inputs.value, 1, 'one image means Image Count 1');
+});
+
+test('the enhance switch writes node 176 "cond", not the retired node 43', () => {
+  // Node 43 was a ComfySwitchNode; the workflow now uses a 176
+  // ImpactConditionalBranch. Writing 43 was silently a no-op.
+  assert.equal(B.enhanceSwitch.node, '176');
+  assert.equal(B.enhanceSwitch.input, 'cond');
+  assert.equal(WORKFLOW['176'].class_type, 'ImpactConditionalBranch');
+  assert.equal(WORKFLOW['176']._meta?.title, 'Prompt Enhance On/Off');
 });
 
 test('the source workflow is never mutated', () => {
@@ -286,6 +296,87 @@ test('collectImages can be narrowed to specific nodes', () => {
     '45': { images: [{ filename: 'b.png' }] },
   };
   assert.deepEqual(collectImages(outputs, ['8']).map((i) => i.filename), ['a.png']);
+});
+
+// ------------------------------------------- encoder resolution + SaveText
+
+test('encoder resolution is written to node 204 when asked for', () => {
+  const wf = buildRunPayload(WORKFLOW, B, { prompt: 'x', images: [], inputResolution: 1536 });
+  assert.equal(wf['204'].inputs.value, 1536);
+  assert.equal(wf['204']._meta.title, 'Input Resolution');
+  // It feeds the text encoder, not the output size.
+  assert.deepEqual(WORKFLOW['5'].inputs.resolution, ['204', 0]);
+});
+
+test('a blank encoder resolution leaves the workflow value alone', () => {
+  // Writing 0 here would ask the encoder for a 0px input, so "unset" has to be
+  // a genuine no-op rather than a null.
+  for (const inputResolution of [null, undefined]) {
+    const wf = buildRunPayload(WORKFLOW, B, { prompt: 'x', images: [], inputResolution });
+    assert.deepEqual(wf['204'], WORKFLOW['204']);
+  }
+});
+
+test('collectText reads SaveText output in the shape ComfyUI really returns', () => {
+  // Verified against a live /history entry: the STRING is inlined in `text` and
+  // the file descriptor sits in a separate `files` key. Reading `text` as a list
+  // of {filename} objects finds nothing at all.
+  const outputs = {
+    '8': { images: [{ filename: 'a.png' }] },
+    '181': {
+      text: ['a small red cube on a plain white studio background'],
+      files: [{ filename: 'ComfyUI_00012.txt', subfolder: '', type: 'output' }],
+    },
+    '999': { text: ['other'], files: [] },
+  };
+  assert.deepEqual(collectText(outputs, ['181']), [
+    {
+      node: '181',
+      texts: ['a small red cube on a plain white studio background'],
+      files: [{ filename: 'ComfyUI_00012.txt', subfolder: '', type: 'output' }],
+    },
+  ]);
+  assert.equal(collectText(outputs, []).length, 0, 'empty list disables capture');
+  assert.equal(collectText(outputs, ['nope']).length, 0);
+  assert.equal(collectText({}, ['181']).length, 0);
+  assert.equal(collectText(null, ['181']).length, 0);
+  assert.equal(collectText({ '181': { text: [], files: [] } }, ['181']).length, 0,
+    'an empty text output is not worth recording');
+});
+
+test('collectText also accepts a node that puts objects in text', () => {
+  const got = collectText({ '7': { text: [{ text: 'hello' }] } }, ['7']);
+  assert.deepEqual(got, [{ node: '7', texts: ['hello'], files: [] }]);
+});
+
+test('collectText falls back to files-only when there is no inline text', () => {
+  const got = collectText({ '7': { files: [{ filename: 'p.txt' }] } }, ['7']);
+  assert.deepEqual(got, [{ node: '7', texts: [], files: [{ filename: 'p.txt' }] }]);
+});
+
+test('the SaveText node is fed by the same switch the text encoder reads', () => {
+  // This is the whole basis for labelling the capture honest: if 181 tapped a
+  // different wire we would be showing a prompt the image was never made from.
+  assert.deepEqual(WORKFLOW['181'].inputs.text, ['178', 0]);
+  assert.deepEqual(WORKFLOW['5'].inputs.prompt, ['178', 0]);
+  assert.equal(WORKFLOW['181'].class_type, 'SaveText');
+});
+
+// --------------------------------------------------------------- validation
+
+test('inputResolution must be blank or a sane pixel size', () => {
+  const base = { prompt: 'x', megapixels: 1, batch: 1, shuffle: 1 };
+  assert.equal(validateJob({ ...base, inputResolution: null }).ok, true);
+  assert.equal(validateJob({ ...base, inputResolution: undefined }).ok, true);
+  assert.equal(validateJob({ ...base, inputResolution: '' }).ok, true, 'blank string means unset');
+  assert.equal(validateJob({ ...base, inputResolution: 1024 }).inputResolution, 1024);
+  assert.equal(validateJob({ ...base, inputResolution: 0 }).ok, false);
+  assert.equal(validateJob({ ...base, inputResolution: 12 }).ok, false, 'below the floor');
+  assert.equal(validateJob({ ...base, inputResolution: 99999 }).ok, false, 'above the ceiling');
+  assert.equal(validateJob({ ...base, inputResolution: 1024.5 }).ok, false, 'must be an integer');
+  assert.equal(validateJob({ ...base, inputResolution: 'big' }).ok, false);
+  // A bad value must never survive as a usable number.
+  assert.equal(validateJob({ ...base, inputResolution: 0 }).inputResolution, null);
 });
 
 // --------------------------------------------------------------- validation

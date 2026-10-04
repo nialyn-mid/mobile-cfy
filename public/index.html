@@ -42,6 +42,12 @@
       <span class="lbl">Steps override</span>
       <input type="number" id="steps" min="1" step="1" inputmode="numeric" placeholder="default">
     </label>
+    <label class="field inline">
+      <span class="lbl">Encoder resolution
+        <a id="helpResolution" class="hint" title="how this works">?</a>
+      </span>
+      <input type="number" id="inputResolution" min="64" max="8192" step="64" inputmode="numeric" placeholder="workflow default">
+    </label>
   </div>
 
   <div class="card">
@@ -135,6 +141,8 @@
     <label class="field"><span class="lbl">Filename template</span><input id="cfgTpl" type="text"></label>
     <p class="note">Tokens: {stamp} {prompt} {variant} {seed} {index} {node} {group}</p>
     <label class="field"><span class="lbl">Collect from nodes (comma separated, blank = all)</span><input id="cfgNodes" type="text"></label>
+    <label class="field"><span class="lbl">Prompt text nodes (comma separated, blank = off)</span><input id="cfgTextNodes" type="text"></label>
+    <p class="note">Prompt text nodes are SaveText-style outputs. Whatever they write is the prompt the text encoder really received, shown in the History tab. Node 181 in the current workflow.</p>
     <div class="btnrow">
       <button id="saveConfig" class="btn primary sm" type="button">Save</button>
       <span id="cfgMsg" class="note"></span>

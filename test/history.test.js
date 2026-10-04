@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { init } from '../lib/config.js';
+import { init, paths } from '../lib/config.js';
 import {
   fingerprint,
   record,
@@ -96,6 +96,94 @@ test('finish stamps status, image count and seeds onto the job row', () => {
   assert.equal(row.results, 4);
   assert.deepEqual(row.seeds, [1, 2]);
   assert.ok(row.finishedAt);
+  assert.deepEqual(row.promptTexts, [], 'no capture was requested for this run');
+});
+
+test('finish stores the prompt the workflow actually rendered, and how it got there', () => {
+  freshRoot();
+  record({ prompt: 'a cat', settings: SETTINGS, slots: [], jobId: 'job-y' });
+  finish('job-y', {
+    status: 'done',
+    results: 1,
+    seeds: [9],
+    promptTexts: [{ runIndex: 0, seed: 9, source: 'enhanced', text: 'a photorealistic tabby cat, studio lighting' }],
+  });
+  const row = list()[0];
+  assert.equal(row.promptTexts.length, 1);
+  assert.equal(row.promptTexts[0].text, 'a photorealistic tabby cat, studio lighting');
+  assert.equal(row.promptTexts[0].source, 'enhanced');
+  assert.equal(row.promptTexts[0].runIndex, 0);
+});
+
+test('every run keeps its own wording - a batch can come back N different ways', () => {
+  freshRoot();
+  record({ prompt: 'a cat', settings: SETTINGS, slots: [], jobId: 'job-m' });
+  finish('job-m', {
+    status: 'done',
+    results: 3,
+    seeds: [1, 2, 3],
+    promptTexts: [
+      { runIndex: 0, seed: 1, source: 'enhanced', text: 'wording one' },
+      { runIndex: 2, seed: 3, source: 'enhanced', text: 'wording three' },
+    ],
+  });
+  const texts = list()[0].promptTexts;
+  assert.deepEqual(texts.map((t) => t.text), ['wording one', 'wording three']);
+  assert.deepEqual(texts.map((t) => t.runIndex), [0, 2]);
+  assert.deepEqual(texts.map((t) => t.seed), [1, 3]);
+});
+
+test('a re-run appends its captures instead of replacing them', () => {
+  freshRoot();
+  record({ prompt: 'a cat', settings: SETTINGS, slots: [], jobId: 'job-r' });
+  finish('job-r', { status: 'done', results: 1, seeds: [1], promptTexts: [{ runIndex: 0, seed: 1, text: 'first wording' }] });
+  finish('job-r', { status: 'done', results: 1, seeds: [1], promptTexts: [{ runIndex: 0, seed: 1, text: 'second wording' }] });
+  assert.deepEqual(list()[0].promptTexts.map((t) => t.text), ['first wording', 'second wording']);
+});
+
+test('the same capture twice is not listed twice', () => {
+  freshRoot();
+  record({ prompt: 'a cat', settings: SETTINGS, slots: [], jobId: 'job-d' });
+  const cap = { runIndex: 0, seed: 5, text: 'same wording' };
+  finish('job-d', { status: 'done', results: 1, seeds: [5], promptTexts: [cap] });
+  finish('job-d', { status: 'done', results: 1, seeds: [5], promptTexts: [{ ...cap }] });
+  assert.equal(list()[0].promptTexts.length, 1);
+});
+
+test('a row written before captures were a list still shows its prompt', () => {
+  // history.json on disk may already hold the old single-string shape.
+  freshRoot();
+  record({ prompt: 'a cat', settings: SETTINGS, slots: [], jobId: 'job-old' });
+  finish('job-old', { status: 'done', results: 1, seeds: [1] });
+  const file = path.join(paths().dataDir, 'history.json');
+  const store = JSON.parse(fs.readFileSync(file, 'utf8'));
+  store.entries[0].promptText = 'legacy wording';
+  store.entries[0].promptSource = 'enhanced';
+  fs.writeFileSync(file, JSON.stringify(store));
+  const texts = list()[0].promptTexts;
+  assert.equal(texts.length, 1);
+  assert.equal(texts[0].text, 'legacy wording');
+  assert.equal(texts[0].source, 'enhanced');
+});
+
+test('a bypassed enhancer is labelled raw, not dressed up as enhanced', () => {
+  // The workflow falls back to node 44 on its own when a reference image is
+  // attached, so the saved text can be the untouched prompt even though the
+  // toggle was on. Showing that as "enhanced prompt" would be a lie.
+  freshRoot();
+  record({ prompt: 'a cat', settings: SETTINGS, slots: [{ uploadId: 'u1' }], jobId: 'job-z' });
+  finish('job-z', { status: 'done', results: 1, seeds: [3], promptTexts: [{ runIndex: 0, seed: 3, source: 'raw', text: 'a cat' }] });
+  assert.equal(list()[0].promptTexts[0].source, 'raw');
+});
+
+test('a re-run that loses its text file keeps what the last one captured', () => {
+  freshRoot();
+  record({ prompt: 'a cat', settings: SETTINGS, slots: [], jobId: 'job-w' });
+  finish('job-w', { status: 'done', results: 1, seeds: [1], promptTexts: [{ runIndex: 0, seed: 1, text: 'enhanced wording' }] });
+  finish('job-w', { status: 'error', results: 0, seeds: [] });
+  const row = list()[0];
+  assert.equal(row.status, 'error');
+  assert.equal(row.promptTexts[0].text, 'enhanced wording');
 });
 
 test('finish for an unknown job is a no-op, not a throw', () => {

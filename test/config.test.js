@@ -62,7 +62,8 @@ test('defaults match the real workflow node ids', () => {
   const b = DEFAULTS.bindings;
   assert.equal(b.promptEnhanced.node, '41');
   assert.equal(b.promptRaw.node, '44');
-  assert.equal(b.enhanceSwitch.node, '43');
+  assert.equal(b.enhanceSwitch.node, '176');
+  assert.equal(b.enhanceSwitch.input, 'cond');
   assert.equal(b.imageCount.node, '158');
   assert.equal(b.shuffleSwitch.node, '68');
   assert.equal(b.turboSwitch.node, '147');
@@ -70,8 +71,11 @@ test('defaults match the real workflow node ids', () => {
   assert.equal(b.stepsFull.node, '150');
   assert.equal(b.seed.node, '37');
   assert.equal(b.megapixels.node, '9');
+  assert.equal(b.inputResolution.node, '204');
   assert.deepEqual(b.images.map((i) => i.node), ['11', '140', '141', '142']);
   assert.deepEqual(DEFAULTS.collectNodes, [], 'both S7 and S8 are collected by default');
+  assert.deepEqual(DEFAULTS.promptTextNodes, ['181'], 'the workflow SaveText node');
+  assert.equal(DEFAULTS.defaults.inputResolution, null, 'blank means the workflow default');
 });
 
 test('a renamed binding is dropped, not left pointing at a dead node', () => {

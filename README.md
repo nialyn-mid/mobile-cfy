@@ -55,9 +55,10 @@ ComfyUI you must restart ComfyUI, copy the new hash from its console, then press
 | Control | What it does |
 |---|---|
 | Prompt | Goes to node `41` (Input Prompt) with enhance on, or node `44` (Raw Prompt) when enhance is off or images are attached |
-| Prompt enhance | Node `43`. Ignored while reference images are attached — the workflow's own node `155` routes around it |
-| Turbo | Node `147`, which already selects the turbo or full GGUF for you |
+| Prompt enhance | Node `176` (`cond`). Ignored while reference images are attached — the workflow routes around it on its own |
+| Turbo | Node `147`, which already selects the turbo or full GGUF (`148` / `183`) for you |
 | Steps | Blank keeps the workflow's 7 (turbo) / 25 (full). A number writes **both** nodes `149` and `150` |
+| Encoder resolution | Node `204` — the size fed to the **text encoder**, not the output size. Blank = the workflow's own 1024 |
 | Megapixels | Node `9` |
 | Batch × Shuffle | `batch × shuffle` sequential runs |
 | Prompt refresh | When the override switch (node `68`) fires — see below |
@@ -172,7 +173,7 @@ Settings without touching code.
 |---|---|---|
 | `promptEnhanced` | `41.value` | Input Prompt |
 | `promptRaw` | `44.value` | Raw Prompt (If Enhance Disabled) |
-| `enhanceSwitch` | `43.switch` | Prompt Enhance On/Off |
+| `enhanceSwitch` | `176.cond` | Prompt Enhance On/Off |
 | `imageCount` | `158.value` | Image Count |
 | `images` | `11` / `140` / `141` / `142` `.image` | Reference 1–4 |
 | `shuffleSwitch` | `68.value` | ON = Override = Refresh |
@@ -180,9 +181,49 @@ Settings without touching code.
 | `stepsTurbo` / `stepsFull` | `149.value` / `150.value` | Turbo Steps / Full Steps |
 | `seed` | `37.seed` | Seed |
 | `megapixels` | `9.megapixels` | Resolution Selector |
+| `inputResolution` | `204.value` | Input Resolution |
 
 Set a node id to blank to disable that feature; it is then never written to the
 payload.
+
+### The prompt the image was actually made from
+
+The workflow writes a text file from node `181` "Save Text", which sits on the
+same wire as the text encoder. The server reads it back after every run and
+stores it with the history entry, so you can see the enhancer's wording:
+
+- History tab → **▾ show** opens the box for the whole prompt. Inside it there is
+  **one collapsible per run**, because a single prompt can legitimately come back
+  several ways: *Every run* refreshes the enhancer, and each refresh re-words the
+  prompt differently. Each inner box is labelled with its run number and seed, and
+  opens to the full text.
+- Each inner box has **copy** (to the clipboard) and **use as prompt**, which
+  loads that exact wording into the Generate tab *and turns the enhancer off* —
+  what you want once a re-wording comes back worth keeping, so you stop paying
+  2–5 minutes per image to redraw wording you already like.
+- The tags say **enhanced prompt** or **raw prompt (enhancer bypassed)**. The
+  workflow bypasses the enhancer on its own whenever a reference image is
+  attached, so the file can hold your untouched prompt even with the toggle on.
+  Labelling that "enhanced" would be a lie.
+- Captures accumulate. Re-running a remembered prompt adds its new wording(s)
+  alongside the old ones rather than replacing them, so a good result never
+  disappears because you tried the prompt again.
+- `promptTextNodes` in `config.json` lists which nodes to read. `[]` turns the
+  capture off. (Note the opposite default to `collectNodes`, where `[]` means
+  "every SaveImage".)
+
+Two other settings live outside the bindings:
+
+- `collectNodes` — which `SaveImage` nodes to collect. `[]` collects all of them.
+- `filenameTemplate` — how downloads are named.
+
+### Encoder resolution
+
+`Encoder resolution` on the Generate tab writes node `204`, which is the pixel
+size fed to the **text encoder**, not the size of the finished image — that stays
+on Megapixels. Leaving it blank uses whatever the workflow says (1024 today).
+Raising it can help the encoder read fine detail in reference images; it costs
+VRAM and time.
 
 ### Two things the old script got wrong
 
@@ -248,8 +289,9 @@ runtime — minutes per run is normal. Turn it off for a much faster turnaround.
 npm test      # node --test "test/**/*.test.js"
 ```
 
-Tests cover config merging, payload construction, the run matrix, and the
-download naming. They need no network and no ComfyUI.
+Tests cover config merging, payload construction, the run matrix, prompt-text
+capture, download naming, upload sniffing and multipart parsing, and the history
+store. 99 of them; they need no network and no ComfyUI.
 
 The server runs unchanged on Windows for development:
 
