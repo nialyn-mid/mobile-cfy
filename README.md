@@ -130,16 +130,25 @@ quietly turn the next, unrelated prompt into an image-to-image job.
 
 **Settings** tab covers the ComfyUI host, the download folder, the filename
 template, and every node binding. **Check bindings** validates all of them against
-the workflow at once. That matters because a stale node id used to fail silently —
-writing `43` after that node was renamed did nothing at all, and the symptom was a
-raw prompt where an enhanced one should have been. Now two things stop that:
+the workflow at once, and every row shows its own verdict — a broken one is marked
+`✗` with the reason, never a tick. That matters because a stale node id used to
+fail silently: writing `43` after that node was renamed did nothing at all, and the
+symptom was a raw prompt where an enhanced one should have been. Now three things
+stop that:
 
 - Generate refuses to start when any binding is broken, naming the node.
 - A binding still holding an *old untouched default* is re-pointed at startup and
   saved, so an upgraded app never keeps writing into a node that moved.
+- **Reset to defaults** puts every binding back to what this build ships with, and
+  reports anything the defaults themselves cannot fit.
 
 A binding you edited by hand is never rewritten — if you know what you are doing,
-the app keeps out of the way.
+the app keeps out of the way. The one shape that does get migrated is a *half*
+edit: a correct new node id still carrying the old input name, like
+`enhanceSwitch = 176 / switch` when node 176's input is called `cond`. That is a
+real node with an input that does not exist, and it is repaired at startup — both
+that and the untouched old default are listed in `BINDING_MIGRATIONS` in
+`lib/config.js`.
 
 ### Queueing
 

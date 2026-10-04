@@ -1,5 +1,7 @@
 // mobile-cfy web UI. No framework, no build step - the server is plain Node.
 
+import { bindingMark } from './bindmark.js';
+
 const $ = (id) => document.getElementById(id);
 
 /**
@@ -1365,13 +1367,15 @@ function renderBindings(bindings) {
     i.dataset.role = 'input';
     d.append(l, n, i);
 
-    const title = state.bindingTitles.get(`${key}${slot ?? ''}`);
-    if (title) {
-      const t = document.createElement('div');
-      t.className = 'bind-title';
-      t.innerHTML = `<span class="ok">✓</span> <b>${escapeHtml(title.title ?? '')}</b> ${escapeHtml(title.classType ?? '')}`;
-      d.append(t);
-    }
+    const rec = state.bindingTitles.get(`${key}${slot ?? ''}`);
+    const mark = document.createElement('div');
+    mark.className = 'bind-title';
+    // One shared decision, so this row and the checker can never tell different
+    // stories about the same binding.
+    const m = bindingMark(rec, escapeHtml);
+    mark.innerHTML = m.html;
+    if (m.bad) d.classList.add('bad');
+    d.append(mark);
     wrap.append(d);
     return d;
   };
@@ -1431,6 +1435,39 @@ $('saveBindings').onclick = async () => {
 
 $('checkBindings').onclick = checkBindings;
 
+/**
+ * Put every binding back to what this build ships with.
+ *
+ * The escape hatch for a row that has drifted: editing the node id by hand is how
+ * the correct id and a stale input name end up side by side, and the startup
+ * migrations deliberately leave hand-edited rows alone. So the page needs to be
+ * able to say "forget what I typed".
+ */
+$('resetBindings').onclick = async () => {
+  const msg = $('bindMsg');
+  if (!confirm('Reset every node binding back to this build\'s defaults?\n\nSettings you changed here will be lost.')) return;
+  msg.textContent = 'resetting…';
+  msg.classList.remove('bad');
+  try {
+    const body = await api('/api/config/bindings/reset', { method: 'POST' });
+    state.cfg = body.config;
+    state.bindingTitles = new Map();
+    for (const r of body.bindings ?? []) state.bindingTitles.set(`${r.binding}${r.slot ?? ''}`, r);
+    renderBindings(body.config.bindings ?? {});
+    paintBindingMarks(body.bindings ?? []);
+    const bad = (body.bindings ?? []).filter((r) => !r.ok);
+    if (bad.length) {
+      msg.textContent = `reset, but ${bad.length} still do not fit this workflow: ` +
+        bad.map((b) => `${b.binding}: ${b.reason}`).join('; ');
+      msg.classList.add('bad');
+      toast('the defaults do not match the workflow - fix them by hand');
+    } else {
+      msg.textContent = 'reset to defaults - every binding ok';
+      toast('bindings reset');
+    }
+  } catch (e) { msg.textContent = e.message; }
+};
+
 /** 400 from /api/generate when a binding is broken - say where to look. */
 function showBindingError(err) {
   const bad = (err.bindings ?? []).map((b) => `${b.binding}${b.slot ? ` #${b.slot}` : ''}: ${b.reason}`);
@@ -1445,31 +1482,37 @@ async function checkBindings() {
   msg.textContent = 'checking…';
   try {
     const { bindings, ok } = await api('/api/config/validate', { method: 'POST' });
+    // The whole record is kept, not just the title: renderBindings re-reads this
+    // map, and a map that cannot say "this one failed" is how a broken row ends
+    // up wearing a tick.
     state.bindingTitles = new Map();
     let bad = 0;
     for (const r of bindings) {
-      state.bindingTitles.set(`${r.binding}${r.slot ?? ''}`, { title: r.title, classType: r.classType });
+      state.bindingTitles.set(`${r.binding}${r.slot ?? ''}`, r);
       if (!r.ok) bad++;
     }
-    for (const el of document.querySelectorAll('#bindings .bind')) {
-      const key = el.dataset.key;
-      const slot = el.dataset.slot === '' ? null : Number(el.dataset.slot);
-      const rec = bindings.find((b) => b.binding === key && (b.slot ?? null) === slot);
-      el.classList.toggle('bad', !!rec && !rec.ok);
-      let mark = el.querySelector('.bind-title');
-      if (!mark) {
-        mark = document.createElement('div');
-        mark.className = 'bind-title';
-        el.append(mark);
-      }
-      if (!rec || rec.disabled) mark.innerHTML = '<span class="ok">–</span> <b>disabled</b>';
-      else if (rec.ok) mark.innerHTML = `<span class="ok">✓</span> <b>${escapeHtml(rec.title ?? '')}</b> ${escapeHtml(rec.classType ?? '')}`;
-      else mark.innerHTML = `<span class="no">✗</span> <b>${escapeHtml(rec.reason ?? '')}</b>`;
-    }
+    paintBindingMarks(bindings);
     msg.textContent = ok ? 'all bindings ok' : `${bad} problem(s) - the Generate button will refuse to run`;
     msg.classList.toggle('bad', !ok);
-    if (state.cfg) renderBindings(state.cfg.bindings);
   } catch (e) { msg.textContent = e.message; }
+}
+
+/** Marks the rows already on screen, without rebuilding them. */
+function paintBindingMarks(bindings) {
+  for (const el of document.querySelectorAll('#bindings .bind')) {
+    const key = el.dataset.key;
+    const slot = el.dataset.slot === '' ? null : Number(el.dataset.slot);
+    const rec = bindings.find((b) => b.binding === key && (b.slot ?? null) === slot);
+    let mark = el.querySelector('.bind-title');
+    if (!mark) {
+      mark = document.createElement('div');
+      mark.className = 'bind-title';
+      el.append(mark);
+    }
+    const m = bindingMark(rec ?? null, escapeHtml);
+    mark.innerHTML = m.html;
+    el.classList.toggle('bad', m.bad);
+  }
 }
 
 $('saveConfig').onclick = async () => {

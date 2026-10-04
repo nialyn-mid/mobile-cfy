@@ -3,9 +3,15 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseEnv } from '../lib/env.js';
-import { deepMerge, mergeConfig, migrateBindings, migrateValues, DEFAULTS, expandHome } from '../lib/config.js';
+import {
+  deepMerge, mergeConfig, migrateBindings, migrateValues,
+  BINDING_MIGRATIONS, DEFAULTS, expandHome,
+} from '../lib/config.js';
 import { ASPECT_RATIOS } from '../lib/payload.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 test('parseEnv reads plain, quoted, and empty assignments', () => {
   const text = ['# comment', 'AUTH_TOKEN=$2b$12$abc', 'QUOTED="two words"', "SINGLE='q'", 'EMPTY=', 'no_equals_here', '', 'SPACED = spaced '].join('\n');
@@ -129,6 +135,37 @@ test('a null binding is skipped instead of being resurrected', () => {
   const bindings = { megapixels: null };
   assert.deepEqual(migrateBindings(bindings), []);
   assert.equal(bindings.megapixels, null, 'null means the user turned the feature off');
+});
+
+test('the enhance gate migrates from both of its old shapes', () => {
+  // The untouched default, and the half-migrated row you get by typing the new
+  // node id into Settings and leaving the old input name beside it - a real node
+  // with an input that does not exist, reported as "has no input switch".
+  for (const from of [{ node: '43', input: 'switch' }, { node: '176', input: 'switch' }]) {
+    const bindings = mergeConfig(DEFAULTS, { bindings: { enhanceSwitch: from } }).bindings;
+    assert.deepEqual(migrateBindings(bindings), ['enhanceSwitch']);
+    assert.deepEqual(bindings.enhanceSwitch, { node: '176', input: 'cond' });
+  }
+});
+
+test('two migration shapes of one binding are reported once', () => {
+  const bindings = mergeConfig(DEFAULTS, {
+    bindings: { megapixels: { node: '9', input: 'megapixels' }, enhanceSwitch: { node: '43', input: 'switch' } },
+  }).bindings;
+  assert.deepEqual(migrateBindings(bindings).sort(), ['enhanceSwitch', 'megapixels']);
+  assert.deepEqual(bindings.enhanceSwitch, { node: '176', input: 'cond' });
+  assert.deepEqual(bindings.megapixels, { node: '232', input: 'value' });
+});
+
+test('every migration points at an input the workflow really has', () => {
+  // A migration that names a wrong node is worse than none: it upgrades a config
+  // into a different broken one and the reason no longer matches the mistake.
+  const wf = JSON.parse(fs.readFileSync(path.join(ROOT, 'workflow_api.json'), 'utf8'));
+  for (const [key, m] of Object.entries(BINDING_MIGRATIONS)) {
+    const node = wf[String(m.to.node)];
+    assert.ok(node, `${key}: node ${m.to.node} is not in the workflow`);
+    assert.ok(m.to.input in (node.inputs ?? {}), `${key}: node ${m.to.node} has no input "${m.to.input}"`);
+  }
 });
 
 test('a setting still holding the old default is upgraded', () => {

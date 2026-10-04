@@ -204,6 +204,24 @@ route('PUT', '/api/config', async (req, res) => {
   });
 });
 
+route('POST', '/api/config/bindings/reset', async (req, res) => {
+  // Put every binding back to what this build ships with.
+  //
+  // The startup migrations only upgrade values they RECOGNISE, so a row edited by
+  // hand (node id changed, input name left behind) stays broken on purpose and
+  // needs a way back. This is that way back, and it reports what it restored so a
+  // workflow the server cannot read is visible immediately rather than after the
+  // next run fails.
+  const saved = saveConfig({ bindings: structuredClone(DEFAULTS.bindings) });
+  const bindings = validateBindings(saved.bindings);
+  json(res, 200, {
+    config: saved,
+    bindings,
+    ok: bindings.every((b) => b.ok),
+    staleBindings: saved.staleBindings ?? [],
+  });
+});
+
 route('POST', '/api/config/validate', async (req, res) => {
   const bindings = validateBindings(state.config.bindings);
   json(res, 200, { bindings, ok: bindings.every((b) => b.ok) });
