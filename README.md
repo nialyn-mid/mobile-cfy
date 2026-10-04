@@ -217,6 +217,42 @@ One thing a pause deliberately does **not** do: survive a server restart. The
 queue lives in memory, so `node server.js` again starts with an empty one. Jobs
 whose prompts are already at ComfyUI keep going there and will still download.
 
+### Stopping the server
+
+The last card in **Settings** is `⏻ shut down server`. It stops the Node process
+that is serving this page — nothing else: ComfyUI keeps running, and your images
+and prompt history are files on disk, untouched.
+
+Because the queue lives in that process, the button asks first, and it is specific
+about what each group of work means:
+
+| | |
+|---|---|
+| queued but never sent to ComfyUI | **lost** unless you hand it over |
+| already at ComfyUI, not started yet | keeps generating, but nothing will be watching it, so those images are **not downloaded here** |
+| downloading already failed | retried automatically after the next start |
+| already downloaded | safe |
+
+Tick **hand queued work to ComfyUI first** and it does exactly what *send all to
+ComfyUI* does, one last time, before leaving. The checkbox only appears when
+there is something to hand over and the queue is not already held.
+
+Then the page **polls until the server really stops answering** — the reply only
+says the request was accepted, so confirmation waits for `/api/health` to stop
+answering entirely. After about 17 seconds of silence it says it is still checking
+and offers **check again**, rather than declaring a victory that did not happen.
+When it does confirm, the screen explains that ComfyUI is still going and that
+`bash start.sh` brings the server back, with a *reload page* link that works the
+moment it does.
+
+The button only works when the page was served **from the phone**
+(`http://127.0.0.1:<port>`). The UI is reachable from every device on the wifi, and
+a tap from a laptop should not kill the phone's server; from another device it
+answers with a 403 and the UI explains why. `MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN=1`
+in the environment lifts that if you want a remote button.
+
+Endpoint: `POST /api/shutdown` with an optional `{"handover":true}`.
+
 ### Viewing images
 
 Every image is already in your download folder the moment its run finishes, so
@@ -376,6 +412,43 @@ Note that Termux's shared-storage folder is `downloads` (plural). If it is
 missing, run `termux-setup-storage` — Settings has a **Test folder** button that
 will tell you.
 
+### When a download fails
+
+A dropped connection used to cost you the file silently: the image still showed in
+the gallery (served straight from ComfyUI), but the copy in the download folder was
+never written and nothing said so. That is now visible and now recoverable.
+
+- Anything still missing is badged **not downloaded** in the gallery, the run says
+  how many images it is still short of, and a note above the grid counts them with a
+  **retry downloads** button.
+- Nothing needs pressing. A background sweep runs every 15 seconds and only acts
+  when there is something outstanding.
+- The rules it follows, chosen so it can never fight you:
+  - **Two tries**, 30s then 2 minutes apart. The download at collect time counts as
+    the first attempt, so a run gets three chances in total — after that the entry
+    is marked **gone** instead of being fetched forever.
+  - **A 404 ends it immediately.** ComfyUI saying "no such file" is a real answer,
+    not a fluke.
+  - **A dead network costs nothing.** A connection error spends no attempt and stops
+    the sweep there, because everything behind it would fail too. Coming back
+    online (or pressing resume) tries again.
+  - **The 24-hour limit counts reachable time only.** Age accrues per sweep, so a
+    phone that was switched off, or asleep out of range, for a week has lost
+    nothing.
+  - **A file you deleted stays deleted.** Only entries that never had a local copy
+    are retry candidates, so a file you removed from the download folder is never
+    quietly downloaded again.
+
+Recovered files keep the name they would have had, because the shuffle/batch/image
+counters recorded at collect time are replayed — so a retry cannot produce
+`…_1.png` next to the original.
+
+Manual endpoint (the button calls it, and it is safe to press twice):
+
+```
+POST /api/gallery/retry    -> {"candidates":1,"recovered":1,"gone":0,"failed":0,"skipped":0,"pending":0}
+```
+
 ---
 
 ## Troubleshooting
@@ -409,6 +482,25 @@ network*).
 **Generation is slow.** The prompt enhancer runs a Qwen3-VL model and dominates
 runtime — minutes per run is normal. Turn it off for a much faster turnaround.
 
+**An image is badged `not downloaded` or `gone`.** The gallery is showing it
+because ComfyUI still has it, but the copy in the download folder failed. The retry
+sweep works on its own every 15s; **retry downloads** forces it now. `gone` means
+the budget ran out or ComfyUI no longer has the file (ComfyUI prunes its output
+folder — a `gone` image may only exist in this app's gallery from now on). See
+*When a download fails*.
+
+**The shut down button does nothing.** The button only works when the page is
+served *from the phone itself* (`http://127.0.0.1:<port>`), because the UI is
+reachable from every device on the wifi and a tap from a laptop should not kill
+the phone's server. Open the UI on the phone. If you genuinely want a remote
+button, start the server with `MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN=1`.
+
+**The page says "still checking" after a stop.** It is polling `/api/health`
+until the connection is refused, which is the only proof that the process is gone.
+About 17 seconds without confirmation it says so and offers **check again** — a
+stop that does not finish leaves the process in exactly the state where the reply
+was fine.
+
 ---
 
 ## Development
@@ -419,14 +511,17 @@ npm test      # node --test "test/**/*.test.js"
 
 Tests cover config merging and the binding/value migrations, payload construction,
 the run matrix, prompt-text capture, download naming, upload sniffing and
-multipart parsing, the history store, the bindings panel's verdict rendering, and
-the queue — bulk submit, an auto-paused queue, offline building, resume, and
-cancel. 134 of them; they need no network and no ComfyUI (`test/queue.test.js`
-runs its own fake ComfyUI on a random port).
+multipart parsing, the history store, the bindings panel's verdict rendering, the
+queue — bulk submit, an auto-paused queue, offline building, resume, and cancel —
+the download-retry sweep, and the shut down route. 148 of them; they need no network
+and no real ComfyUI (`test/queue.test.js`, `test/retry.test.js` and
+`test/shutdown.test.js` each run a fake ComfyUI from the shared
+`test/helpers/fakeComfy.js`). Every temp root a test creates is deleted again, so
+running the suite on the phone does not leave litter behind.
 
-`test/reset.test.js` and `test/queue.test.js` both start a second server on port
-3082 with `MOBILE_CFY_ROOT` pointed at a temp directory, so they never touch the
-instance you are using.
+`test/reset.test.js` starts a second server on port 3082, `test/shutdown.test.js`
+on 3083, each with `MOBILE_CFY_ROOT` pointed at a temp directory, so they never
+touch the instance you are using.
 
 The server runs unchanged on Windows for development:
 
@@ -442,9 +537,9 @@ start.sh stop.sh   Termux launcher
 config.json        generated; all node ids and paths
 workflow_api.json  the ComfyUI workflow, API format
 lib/               config, comfy, ws, payload, runner, download, gallery,
-                   history, uploads, multipart, env
+                   history, uploads, multipart, env, retry, shutdown
 public/            index.html, app.js, style.css, bindmark.js  (no build step)
-test/              node --test
+test/              node --test  (helpers/fakeComfy.js is the shared fake server)
 data/
   history.json     prompt memory (300 newest)
   index.json       gallery index

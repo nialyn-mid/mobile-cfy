@@ -303,6 +303,10 @@ label.btn { display: inline-block; }
 }
 .runs li b { color: var(--fg); font-weight: 600; min-width: 62px; }
 .runs li.err { color: #ff9c9c; }
+.runs li.warn { color: var(--warn); }
+/* The run itself succeeded, so the failure rides along as a qualifier instead of
+   replacing the run's own line. */
+.run-note { margin-left: auto; font-size: 11px; font-weight: 600; white-space: nowrap; }
 
 .thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
 .thumbs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); }
@@ -342,6 +346,18 @@ label.btn { display: inline-block; }
   flex: 1; border: 0; border-radius: 7px; padding: 6px 2px;
   background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; cursor: pointer;
 }
+/* An image whose download failed still renders (the gallery streams it from
+   ComfyUI) - what is missing is the copy in the download folder, and that has to
+   be visible without tapping anything. */
+.cell.undownloaded { border-color: var(--warn); }
+.cell.gone { border-color: var(--bad); }
+.cell.gone img { opacity: .6; }
+.cell-tag {
+  position: absolute; top: 4px; left: 4px; z-index: 2;
+  padding: 2px 6px; border-radius: 999px; font-size: 10px; font-weight: 700;
+  background: rgba(0, 0, 0, .7); color: var(--warn);
+}
+.cell.gone .cell-tag { color: var(--bad); }
 
 /* -------------------------------------------------------------- bindings */
 .bindings { display: flex; flex-direction: column; gap: 8px; }
@@ -427,6 +443,48 @@ label.btn { display: inline-block; }
   background: var(--panel2); border: 1px solid var(--line); color: var(--fg);
   padding: 10px 16px; border-radius: 999px; font-size: 13px;
   max-width: 88vw; text-align: center;
+}
+
+/* Above the toast (50) and the lightbox (40): a shutdown in progress must not be
+   coverable by anything that was already on screen. */
+.modal {
+  position: fixed; inset: 0; z-index: 60;
+  background: rgba(0, 0, 0, .74);
+  display: flex; align-items: center; justify-content: center;
+  padding: 18px;
+}
+.modal-card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 16px;
+  width: min(420px, 100%);
+  max-height: 86vh;
+  overflow: auto;
+}
+.modal-card h2 { margin: 0 0 10px; font-size: 16px; }
+.modal-body { font-size: 13px; color: var(--fg); }
+.modal-body ul { margin: 8px 0; padding-left: 18px; color: var(--dim); }
+.modal-body li { margin-bottom: 4px; }
+.modal-body .bad { color: var(--bad); font-weight: 600; }
+.modal-body .warn { color: var(--warn); }
+.shopt {
+  display: flex; gap: 9px; align-items: flex-start;
+  margin-top: 12px; font-size: 13px;
+  padding: 9px 10px; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--panel2);
+}
+.shopt input { margin: 1px 0 0; }
+.shwait { display: flex; gap: 8px; align-items: center; color: var(--dim); }
+.shwait i {
+  width: 12px; height: 12px; flex: none; border-radius: 50%;
+  border: 2px solid var(--line); border-top-color: var(--accent);
+  animation: shspin .8s linear infinite;
+}
+@keyframes shspin { to { transform: rotate(360deg); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .shwait i { animation: none; }
 }
 
 @media (min-width: 560px) {

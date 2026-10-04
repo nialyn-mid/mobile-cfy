@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -8,143 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 import { init, saveConfig, paths } from '../lib/config.js';
 import { runner } from '../lib/runner.js';
+import { startFakeComfyUI, textOf, sleep, waitFor, dropRoot } from './helpers/fakeComfy.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-
-// A 1x1 PNG - the downloader only needs bytes with the right magic number.
-const PNG = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64',
-);
-
-/**
- * A stand-in for ComfyUI, good enough to exercise the queue: /prompt, /history,
- * /queue (including the `delete` form cancel needs), /view and /system_stats.
- *
- * `mode: 'manual'` keeps every submitted prompt pending until the test finishes
- * it, which is what makes "hand the whole batch over and walk away" observable.
- */
-function startFakeComfyUI({ mode = 'instant' } = {}) {
-  const state = {
-    mode,
-    prompts: [],
-    deleted: [],
-    next: 0,
-    pending: new Map(),
-    history: new Map(),
-  };
-
-  const entryFor = (n, prompt) => ({
-    status: { status_str: 'success', completed: true },
-    outputs: {
-      8: { images: [{ filename: `ComfyUI_${String(n).padStart(5, '0')}_.png`, subfolder: '', type: 'output' }] },
-      181: { text: [`enhanced: ${String(prompt).slice(0, 40)}`] },
-    },
-  });
-
-  const server = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://localhost');
-    const send = (code, body, type = 'application/json') => {
-      res.writeHead(code, { 'Content-Type': type });
-      res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
-    };
-
-    if (req.method === 'POST' && url.pathname === '/prompt') {
-      readJson(req).then((body) => {
-        const n = ++state.next;
-        const promptId = `p${n}`;
-        state.prompts.push({ id: promptId, payload: body?.prompt, clientId: body?.client_id });
-        if (state.mode === 'instant') state.history.set(promptId, entryFor(n, 'x'));
-        else state.pending.set(promptId, n);
-        send(200, { prompt_id: promptId, number: n, node_errors: {} });
-      });
-      return;
-    }
-
-    if (req.method === 'GET' && url.pathname.startsWith('/history/')) {
-      const id = decodeURIComponent(url.pathname.slice('/history/'.length));
-      const n = state.history.has(id) ? null : state.pending.get(id);
-      if (state.history.has(id)) send(200, { [id]: state.history.get(id) });
-      else if (n !== undefined) send(200, { [id]: { status: { status_str: 'pending' }, outputs: {} } });
-      else send(200, {});
-      return;
-    }
-
-    if (url.pathname === '/queue') {
-      if (req.method === 'POST') {
-        readJson(req).then((body) => {
-          for (const id of body?.delete ?? []) {
-            state.deleted.push(id);
-            state.pending.delete(id);
-            state.history.delete(id);
-          }
-          send(200, {});
-        });
-        return;
-      }
-      send(200, {
-        queue_running: [...state.pending.keys()].map((id) => [1, id, {}, {}, []]),
-        queue_pending: [],
-      });
-      return;
-    }
-
-    if (url.pathname === '/view') return send(200, PNG, 'image/png');
-    if (url.pathname === '/system_stats') {
-      return send(200, { system: { comfyui_version: '0.3.0-test', devices: [] } });
-    }
-    send(404, { error: 'not found' });
-  });
-
-  return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
-      resolve({
-        port,
-        state,
-        /** Finish every prompt still waiting. */
-        completeAll() {
-          for (const [id, n] of state.pending) state.history.set(id, entryFor(n, 'x'));
-          state.pending.clear();
-        },
-        ids: () => state.prompts.map((p) => p.id),
-        close: () => new Promise((r) => server.close(r)),
-      });
-    });
-  });
-}
-
-/** The prompt text a submitted payload carried, whichever text node took it. */
-function textOf(p) {
-  const wf = p.payload ?? {};
-  return wf['41']?.inputs?.value ?? wf['44']?.inputs?.value ?? null;
-}
-
-function readJson(req) {
-  return new Promise((resolve) => {
-    const chunks = [];
-    req.on('data', (c) => chunks.push(c));
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'));
-      } catch {
-        resolve({});
-      }
-    });
-  });
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-async function waitFor(fn, label, timeout = 15000) {
-  const end = Date.now() + timeout;
-  for (;;) {
-    const v = fn();
-    if (v) return v;
-    if (Date.now() > end) throw new Error(`timed out waiting for ${label}`);
-    await sleep(40);
-  }
-}
 
 /** Point the whole app at a throwaway root + a given ComfyUI port. */
 function useTempRoot(port) {
@@ -188,7 +53,7 @@ const JOB = (prompt, batch = 1) => ({
 
 test('submit all hands the running job\'s tail AND the waiting jobs to ComfyUI', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  useTempRoot(comfy.port);
+  const root = useTempRoot(comfy.port);
   try {
     const a = runner.enqueue(JOB('bulk alpha', 2));
     const b = runner.enqueue(JOB('bulk beta', 1));
@@ -238,13 +103,45 @@ test('submit all hands the running job\'s tail AND the waiting jobs to ComfyUI',
   } finally {
     cleanup();
     await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('send everything never re-sends a run that is already on its way', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = useTempRoot(comfy.port);
+  const gate = comfy.stallNext();
+  try {
+    const a = runner.enqueue(JOB('bulk race', 2));
+    // ComfyUI has the first prompt, but the phone has not been told the id yet.
+    // In that window the run has no prompt id and yet is submitted as far as the
+    // queue is concerned - and "send everything" must read it that way too.
+    await waitFor(() => comfy.state.prompts.length === 1, 'the first prompt to arrive');
+
+    const report = await runner.submitAll();
+    assert.equal(report.runs, 1, 'only the run nobody is submitting was handed over');
+    assert.equal(report.alreadySubmitted, 1, 'the in-flight run counts as already there');
+    assert.equal(comfy.state.prompts.length, 2, 'no duplicate prompt reached ComfyUI');
+
+    gate.release();
+    await waitFor(() => runner.get(a.id).runs[0].promptId, 'the in-flight prompt id');
+    // The seed recorded for the in-flight run is the one its payload carried, so
+    // the image and the history row still agree.
+    const [firstRun, secondRun] = runner.get(a.id).runs;
+    assert.equal(comfy.state.prompts[0].payload?.['37']?.inputs?.seed, firstRun.seed);
+    assert.notEqual(firstRun.seed, secondRun.seed, 'a re-send would have burnt a second seed');
+  } finally {
+    gate.release();
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
   }
 });
 
 test('a lost connection holds the queue instead of failing the job', async () => {
   // Nothing is listening on this port, which is what leaving the network looks
   // like from the server's side.
-  useTempRoot(1);
+  const root = useTempRoot(1);
   try {
     const a = runner.enqueue(JOB('offline one', 2));
     const q = await waitFor(() => (runner.queueState().paused ? runner.queueState() : null), 'the queue to hold');
@@ -264,12 +161,13 @@ test('a lost connection holds the queue instead of failing the job', async () =>
     assert.match(snap.error, /ComfyUI at http:\/\/127\.0\.0\.1:1/);
   } finally {
     cleanup();
+    dropRoot(root);
   }
 });
 
 test('requests can still be built while the queue is held, and resume finishes them all', async () => {
   // Start with no server at all, queue work offline, then bring one up.
-  useTempRoot(1);
+  const root = useTempRoot(1);
   const comfy = await startFakeComfyUI({ mode: 'instant' });
   try {
     const a = runner.enqueue(JOB('built offline a', 2));
@@ -294,12 +192,13 @@ test('requests can still be built while the queue is held, and resume finishes t
   } finally {
     cleanup();
     await comfy.close();
+    dropRoot(root);
   }
 });
 
 test('cancel after a bulk submit calls ComfyUI\'s delete for the prompt that never started', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  useTempRoot(comfy.port);
+  const root = useTempRoot(comfy.port);
   try {
     const a = runner.enqueue(JOB('cancel me', 2));
     await waitFor(() => comfy.state.prompts.length === 1, 'the first run');
@@ -322,12 +221,13 @@ test('cancel after a bulk submit calls ComfyUI\'s delete for the prompt that nev
   } finally {
     cleanup();
     await comfy.close();
+    dropRoot(root);
   }
 });
 
 test('a manual pause holds the queue and resume starts it again', async () => {
   const comfy = await startFakeComfyUI({ mode: 'instant' });
-  useTempRoot(comfy.port);
+  const root = useTempRoot(comfy.port);
   try {
     const held = runner.pause('manual');
     assert.equal(held.paused, true);
@@ -344,5 +244,6 @@ test('a manual pause holds the queue and resume starts it again', async () => {
   } finally {
     cleanup();
     await comfy.close();
+    dropRoot(root);
   }
 });

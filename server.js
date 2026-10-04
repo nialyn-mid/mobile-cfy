@@ -18,9 +18,11 @@ import { ComfyClient, AuthError, mimeFor } from './lib/comfy.js';
 import { parseMultipart } from './lib/multipart.js';
 import { saveUpload, findUpload, listUploads, sniffImage } from './lib/uploads.js';
 import * as history from './lib/history.js';
-import { listEntries, findEntry, clearIndex } from './lib/gallery.js';
+import { listEntries, findEntry, clearIndex, updateEntry, missingDownloads } from './lib/gallery.js';
 import { runner } from './lib/runner.js';
+import { sweep as sweepDownloadsNow, startRetryTicker } from './lib/retry.js';
 import { downloadImage, uniquePath, renderTemplate, sanitizeFilename } from './lib/download.js';
+import { isSameHost } from './lib/shutdown.js';
 
 const ROOT = process.env.MOBILE_CFY_ROOT || process.cwd();
 init(ROOT);
@@ -137,6 +139,28 @@ function matchRoute(method, pathname) {
   }
   return null;
 }
+
+/**
+ * Try to put back result images whose download failed. Fire-and-forget by design:
+ * every caller of this has already answered the user, and a slow sweep must not
+ * hold up the reply that said "resumed" or "handed over".
+ */
+function sweepDownloads({ force = false } = {}) {
+  if (!missingDownloads().length) return null;
+  return sweepDownloadsNow({ client: new ComfyClient(), force })
+    .then((report) => {
+      if (report.recovered || report.gone) console.log(`[retry] ${JSON.stringify(report)}`);
+      return report;
+    })
+    .catch((e) => {
+      console.warn(`[retry] sweep failed: ${e.message}`);
+      return null;
+    });
+}
+
+// A slow heartbeat for the fluke case: the network can come back without the user
+// touching anything. It only does work when something is actually outstanding.
+startRetryTicker(() => new ComfyClient());
 
 route('GET', '/api/health', async (req, res) => {
   const client = new ComfyClient();
@@ -325,10 +349,17 @@ route('GET', '/api/queue', async (req, res) => json(res, 200, runner.queueState(
 
 route('POST', '/api/queue/pause', async (req, res) => json(res, 200, runner.pause('manual')));
 
-route('POST', '/api/queue/resume', async (req, res) => json(res, 200, runner.resume()));
+route('POST', '/api/queue/resume', async (req, res) => {
+  const state = runner.resume();
+  // The connection is known good at this exact moment, which is the moment the
+  // retry sweep is worth running.
+  sweepDownloads();
+  json(res, 200, state);
+});
 
 route('POST', '/api/queue/submit-all', async (req, res) => {
   const report = await runner.submitAll();
+  sweepDownloads();
   json(res, 200, { ...report, queue: runner.queueState() });
 });
 
@@ -428,6 +459,11 @@ route('GET', '/api/gallery/:id/file', async (req, res, url, { id }) => {
   }
 });
 
+route('POST', '/api/gallery/retry', async (req, res) => {
+  const report = await sweepDownloadsNow({ client: new ComfyClient(), force: true });
+  json(res, 200, { ...report, pending: missingDownloads().length });
+});
+
 route('POST', '/api/gallery/:id/save', async (req, res, url, { id }) => {
   const entry = findEntry(id);
   if (!entry) return json(res, 404, { error: 'unknown image' });
@@ -444,6 +480,10 @@ route('POST', '/api/gallery/:id/save', async (req, res, url, { id }) => {
       template: body.template ?? config().filenameTemplate,
       ctx: { prompt: entry.prompt, seed: entry.seed, node: entry.node },
     });
+    // Record it. Hand-fetching an image and leaving `localPath` null is exactly
+    // the desync this feature exists to remove, so the escape hatch has to close
+    // it too - otherwise the file is on disk and the index still says otherwise.
+    updateEntry(entry.id, { localPath: saved.path, localName: saved.name, bytes: saved.bytes, retry: null });
     json(res, 200, saved);
   } catch (e) {
     json(res, 500, { error: e.message });
@@ -453,6 +493,61 @@ route('POST', '/api/gallery/:id/save', async (req, res, url, { id }) => {
 route('DELETE', '/api/gallery', async (req, res) => {
   const cleared = clearIndex();
   json(res, 200, { cleared: cleared.length });
+});
+
+// ------------------------------------------------------------------ shutdown
+
+route('POST', '/api/shutdown', async (req, res) => {
+  const port = config().server.port;
+  if (!isSameHost(req)) {
+    return json(res, 403, {
+      error: `the shut down button only works from the phone - open the UI at http://127.0.0.1:${port}`,
+    });
+  }
+  if (stopping) return json(res, 200, { ok: true, stopping: true, already: true });
+
+  // Set BEFORE the optional handover: that await is a long pause in which a
+  // double tap would otherwise start a second handover and a second exit.
+  stopping = true;
+
+  const body = await readJson(req);
+  const q = runner.queueState();
+  const jobs = runner.list();
+
+  // Handing the queue over first is optional and never blocks the shutdown: if
+  // ComfyUI is gone the handover fails, the failure is reported in the reply the
+  // user already sees, and the server still stops.
+  let handover = null;
+  if (body?.handover === true) {
+    handover = await runner.submitAll();
+    sweepDownloads();
+  }
+
+  const inFlight = jobs.filter((j) => ['queued', 'running', 'paused'].includes(j.status));
+  const summary = {
+    ok: true,
+    stopping: true,
+    reason: 'web ui',
+    at: new Date().toISOString(),
+    jobs: inFlight.map((j) => ({
+      id: j.id,
+      status: j.status,
+      runs: (j.runs ?? []).length,
+      atComfy: (j.runs ?? []).filter((r) => r.promptId).length,
+    })),
+    queue: runner.queueState(),
+    handover,
+  };
+  console.log(
+    `[server] shutting down on request from ${req.socket?.remoteAddress ?? 'unknown'}` +
+    ` (${inFlight.length} job(s) in flight${handover ? `, handed ${handover.runs} run(s) over` : ''})`
+  );
+
+  // Answer first, leave second. The page polls for the socket to stop answering,
+  // so the exit has to happen after this reply is actually on the wire - not
+  // after the handler returns, which is not the same thing.
+  res.once('finish', () => shutDown('web ui'));
+  json(res, 200, summary);
 });
 
 // ------------------------------------------------------------------- history
@@ -517,6 +612,30 @@ export function validateBindings(bindings) {
 
 // ------------------------------------------------------------------- server
 
+// Set the moment a shutdown is accepted. A second press gets an answer instead
+// of queueing a second exit.
+let stopping = false;
+// Separate from `stopping` on purpose: the shutdown route sets `stopping` long
+// before the reply is on the wire, so a guard that reads it would decide the
+// exit had already happened and never leave.
+let exiting = false;
+
+/**
+ * Leave. Nothing is drained first: the SSE stream and the keep-alive sockets to
+ * ComfyUI would keep the process alive for ever, and `server.close()` on top of
+ * `process.exit()` is what trips libuv's `UV_HANDLE_CLOSING` assertion on
+ * Windows - the same handle gets closed twice. So the exit is one timer, and the
+ * reply that asked for it has long since been on the wire. start.sh is `wait`ing
+ * on this pid, so its EXIT trap releases the wake lock and removes .server.pid.
+ */
+function shutDown(reason = 'signal') {
+  if (exiting) return;
+  exiting = true;
+  console.log(`\nbye (${reason})`);
+  process.exitCode = 0;
+  setTimeout(() => process.exit(0), 300).unref();
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const hit = matchRoute(req.method, url.pathname);
@@ -550,10 +669,9 @@ server.listen(c.server.port, c.server.host, () => {
   }
 });
 
-process.on('SIGINT', () => {
-  console.log('\nbye');
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 1500).unref();
-});
+process.on('SIGINT', () => shutDown('SIGINT'));
+// stop.sh sends SIGTERM. It used to kill the process outright, which skipped
+// start.sh's chance to tidy up the same way a Ctrl-C did.
+process.on('SIGTERM', () => shutDown('SIGTERM'));
 
-export { server, routes, route, json, readBody, readJson, renderTemplate, uniquePath };
+export { server, routes, route, json, readBody, readJson, renderTemplate, uniquePath, shutDown };

@@ -122,10 +122,12 @@
   <div class="card-hd sticky-hd">
     <span>Gallery</span>
     <span class="btnrow">
+      <button id="retryDownloads" class="btn ghost sm" type="button" hidden>retry downloads</button>
       <button id="reloadGallery" class="btn ghost sm" type="button">refresh</button>
       <button id="clearGallery" class="btn ghost sm danger" type="button">clear index</button>
     </span>
   </div>
+  <p class="note warn" id="galleryMissing" hidden></p>
   <div id="galleryList" class="groups"></div>
 </section>
 
@@ -199,6 +201,19 @@
       <ul id="nodeList" class="nodelist"></ul>
     </details>
   </div>
+
+  <div class="card">
+    <div class="card-hd">Server control</div>
+    <p class="note">The server is a Node process inside your Termux session. Stopping it ends
+      everything the app is holding: queued prompts and images still to download are gone, while
+      prompts already handed to ComfyUI keep running there and finish on their own.</p>
+    <div class="btnrow">
+      <button id="shutdownServer" class="btn danger sm" type="button">⏻ shut down server</button>
+      <span id="shutdownMsg" class="note"></span>
+    </div>
+    <p class="note">Start it again with <code>bash start.sh</code> in Termux. The page confirms the
+      shutdown by watching the server stop answering, not by trusting the reply.</p>
+  </div>
 </section>
 
 </main>
@@ -227,6 +242,21 @@
     </span>
     <button class="btn ghost sm" id="lbUse" type="button">⟳ add to prompt</button>
     <button class="btn ghost sm" id="lbClose" type="button">-✕-</button>
+  </div>
+</div>
+<div id="shutdownModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="shTitle">
+    <h2 id="shTitle">Shut down mobile-cfy?</h2>
+    <div id="shBody" class="modal-body"></div>
+    <label class="shopt" id="shHandoverRow" hidden>
+      <input id="shHandover" type="checkbox">
+      <span>hand queued work to ComfyUI first</span>
+    </label>
+    <div class="btnrow">
+      <button id="shGo" class="btn danger sm" type="button">shut it down</button>
+      <button id="shCancel" class="btn ghost sm" type="button">cancel</button>
+      <button id="shAgain" class="btn ghost sm" type="button" hidden>check again</button>
+    </div>
   </div>
 </div>
 <div id="toast" class="toast" hidden></div>

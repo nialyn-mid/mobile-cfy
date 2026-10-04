@@ -44,6 +44,7 @@ const state = {
   queue: { paused: false, reason: null, waiting: 0, running: 0, submitted: 0 },
   es: null,
   gallery: [],
+  galleryLoaded: false,          // the gallery is only read when its tab is opened
   history: [],
   collapsed: new Set(),          // gallery job ids folded away, from localStorage
   bindingTitles: new Map(),
@@ -141,7 +142,7 @@ async function refreshHealth() {
     $('healthBtn').title = c.error || `${c.host}:${c.port}`;
   } catch (e) {
     dot.className = 'dot bad';
-    text.textContent = 'server offline';
+    text.textContent = stopping ? 'server stopped' : 'server offline';
   }
 }
 
@@ -498,6 +499,9 @@ function connectEvents() {
     // SSE drops are normal when the phone sleeps; fall back to polling.
     es.close();
     state.es = null;
+    // A shutdown in progress is the other reason the stream ends, and there is
+    // nothing left to reconnect to.
+    if (stopping) return;
     setTimeout(connectEvents, 4000);
     pollJobs();
   };
@@ -705,7 +709,7 @@ function applyQueue(q) {
 let pollTimer = null;
 async function pollJobs() {
   clearTimeout(pollTimer);
-  if (state.es) return;
+  if (state.es || stopping) return;
   try {
     const { jobs, queue } = await api('/api/jobs');
     for (const snap of jobs) state.jobs.set(snap.id, snap);
@@ -776,6 +780,18 @@ function renderJob(job) {
           .filter(Boolean).join(' · ');
     li.lastChild.textContent = detail;
     if (r.promptId) li.title = `ComfyUI prompt ${r.promptId}`;
+    // A failed download used to be invisible: it went into run.errors and nothing
+    // ever read it, so the image simply was not in the download folder and there
+    // was no sign of why. The run still succeeded - say the half that went wrong.
+    const dl = (r.errors ?? []).filter((x) => /download failed/i.test(x));
+    if (dl.length) {
+      li.classList.add('warn');
+      const note = document.createElement('span');
+      note.className = 'run-note';
+      note.textContent = `${dl.length} image(s) not downloaded`;
+      note.title = `${dl[0]} - the gallery retries these on its own`;
+      li.append(note);
+    }
     ul.append(li);
   }
 
@@ -798,6 +814,7 @@ async function loadGallery() {
   try {
     const { images } = await api('/api/gallery?limit=300');
     state.gallery = images;
+    state.galleryLoaded = true;
     renderGallery();
   } catch (e) { toast(e.message); }
 }
@@ -825,9 +842,38 @@ function toggleGroup(jobId) {
   renderGallery();
 }
 
+/**
+ * Images whose download never produced a file. The gallery still shows them -
+ * `/api/gallery/:id/file` streams from ComfyUI when there is nothing on disk -
+ * so this is not a broken thumbnail, it is a missing copy in the download
+ * folder, which is the copy that outlives ComfyUI. `retry.gone` means the sweep
+ * has stopped trying and why.
+ */
+function missingEntries(entries) {
+  return entries.filter((e) => e.localPath == null);
+}
+
+/** The amber line above the gallery: what is missing, and what can still be fixed. */
+function renderMissingNote() {
+  const missing = missingEntries(state.gallery);
+  const gone = missing.filter((e) => e.retry?.gone);
+  const live = missing.length - gone.length;
+  const note = $('galleryMissing');
+  setHidden('retryDownloads', live === 0);
+  if (!missing.length) return setHidden('galleryMissing', true);
+
+  let text = `${missing.length} image(s) are not in the download folder`;
+  if (live) text += ` - the app keeps retrying while ComfyUI is reachable`;
+  if (gone.length) text += `. ${gone.length} cannot be recovered: ${gone[0].retry.reason}`;
+  text += '.';
+  setText('galleryMissing', text);
+  setHidden('galleryMissing', false);
+}
+
 function renderGallery() {
   const wrap = $('galleryList');
   wrap.innerHTML = '';
+  renderMissingNote();
   if (!state.gallery.length) {
     wrap.innerHTML = '<p class="note">No images yet. Generate something, or pull a past image back from ComfyUI.</p>';
     return;
@@ -877,6 +923,7 @@ function renderGallery() {
     for (const entry of entries) {
       const cell = document.createElement('div');
       cell.className = 'cell';
+      if (entry.localPath == null) cell.classList.add(entry.retry?.gone ? 'gone' : 'undownloaded');
       const img = document.createElement('img');
       img.src = `/api/gallery/${entry.id}/file`;
       img.loading = 'lazy';
@@ -888,8 +935,21 @@ function renderGallery() {
       bUse.textContent = '⟳ use as input';
       bUse.onclick = () => useAsInput(entry);
       // No save button: every image is already written to the download folder
-      // as its run finishes, so a second copy is noise.
+      // as its run finishes, so a second copy is noise. The one exception is an
+      // image whose download failed, and that is now labelled rather than
+      // silently missing - "retry downloads" at the top fetches those back.
       acts.append(bUse);
+      if (entry.localPath == null) {
+        // Outside .acts on purpose: that bar only appears on tap/hover, and the
+        // whole point of this marker is that it is visible without touching it.
+        const tag = document.createElement('span');
+        tag.className = 'cell-tag';
+        tag.textContent = entry.retry?.gone ? 'gone' : 'not downloaded';
+        tag.title = entry.retry?.gone
+          ? `ComfyUI cannot serve this any more (${entry.retry.reason})`
+          : 'still waiting for a retry - the file is not in the download folder yet';
+        cell.append(tag);
+      }
       cell.append(img, acts);
       grid.append(cell);
     }
@@ -904,6 +964,30 @@ async function saveEntry(entry) {
   // the one case the button could not fix: a download that failed mid-job.
   return api(`/api/gallery/${entry.id}/save`, { method: 'POST', body: '{}' });
 }
+
+$('retryDownloads').onclick = async () => {
+  const btn = $('retryDownloads');
+  btn.disabled = true;
+  btn.textContent = 'retrying…';
+  try {
+    const r = await api('/api/gallery/retry', { method: 'POST', body: '{}' });
+    const parts = [];
+    if (r.recovered) parts.push(`${r.recovered} recovered`);
+    if (r.gone) parts.push(`${r.gone} unrecoverable`);
+    if (r.failed) parts.push(`${r.failed} failed again`);
+    toast(parts.length ? parts.join(' · ') : `checked ${r.candidates}, nothing to do`);
+    // The gallery reads the index, so it is always current. The job panel's own
+    // snapshot was taken at collect time and keeps saying what happened then -
+    // which is the honest half of the story.
+    await loadGallery();
+  } catch (e) {
+    toast(`retry failed: ${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'retry downloads';
+    renderMissingNote();
+  }
+};
 
 $('reloadGallery').onclick = loadGallery;
 $('clearGallery').onclick = async () => {
@@ -1675,6 +1759,202 @@ $('reloadToken').onclick = async () => {
     await refreshHealth();
   } catch (e) { toast(e.message); }
 };
+
+// ------------------------------------------------------------ server control
+
+/**
+ * Stop the server from the page, then prove that it did.
+ *
+ * The reply is not proof. A wedged process, or a socket held open by the event
+ * stream, could still be there after a `stopping: true` answer - so the page
+ * keeps asking /api/health and only calls it done when the socket itself stops
+ * answering. A refused connection is the one signal that cannot lie.
+ */
+let stopping = false;
+let shTimer = null;
+
+/** Runs of this job that never reached ComfyUI, so a stop would lose them. */
+const unsentCount = (j) =>
+  (j.runs ?? []).filter((r) => !r.promptId && ['pending', 'queued'].includes(r.status)).length;
+
+/**
+ * What stopping would cost, as consequences rather than counts. Nothing here is
+ * fetched: the queue strip, the job list and the gallery already hold all of
+ * it, so the confirmation can appear instantly.
+ */
+function shutdownReport() {
+  const jobs = [...state.jobs.values()].filter(inFlight);
+  const unsent = jobs.reduce((n, j) => n + unsentCount(j), 0);
+  const atComfy = jobs.reduce((n, j) => n + (j.runs ?? []).filter((r) => r.promptId).length, 0);
+  const held = state.queue?.paused === true;
+  const missing = missingEntries(state.gallery).filter((e) => !e.retry?.gone).length;
+  const lines = [];
+  if (!jobs.length && !missing) lines.push('<p>Nothing is in flight and every image is downloaded.</p>');
+  if (held) {
+    lines.push('<p>The queue is paused because ComfyUI is not answering, so there is nothing to hand over.</p>');
+  } else if (unsent) {
+    lines.push(`<p class="bad">${unsent} run${unsent === 1 ? '' : 's'} never reached ComfyUI and will be lost.</p>`);
+  } else if (jobs.length) {
+    lines.push('<p>Everything queued has already been handed to ComfyUI.</p>');
+  }
+  if (atComfy) {
+    lines.push(`<p class="warn">${atComfy} prompt${atComfy === 1 ? '' : 's'} keep${atComfy === 1 ? 's' : ''} generating on ComfyUI after this, but nothing will be watching them, so those images are not downloaded here.</p>`);
+  }
+  if (missing) {
+    lines.push(`<p class="warn">${missing} image${missing === 1 ? '' : 's'} still waiting to be downloaded will be retried after the next start.</p>`);
+  }
+  if (jobs.length) {
+    const rows = jobs.slice(0, 4).map((j) => {
+      const done = (j.runs ?? []).filter((r) => r.promptId).length;
+      return `<li>${escapeHtml(j.id)} · ${j.status} · ${done}/${(j.runs ?? []).length} at ComfyUI</li>`;
+    });
+    const rest = jobs.length - Math.min(jobs.length, 4);
+    if (rest > 0) rows.push(`<li>and ${rest} more</li>`);
+    lines.push(`<ul>${rows.join('')}</ul>`);
+  }
+  return { html: lines.join(''), offerHandover: unsent > 0 && !held };
+}
+
+function openShutdownModal() {
+  setText('shTitle', 'Shut down mobile-cfy?');
+  paintShutdownBody();
+  setHidden('shAgain', true);
+  setDisabled('shGo', false);
+  setText('shGo', 'shut it down');
+  setHidden('shCancel', false);
+  setHidden('shutdownModal', false);
+  // The gallery is only loaded when that tab is opened, so an untouched session
+  // would claim every image is downloaded when it simply has not looked yet.
+  if (!state.galleryLoaded) {
+    loadGallery().then(() => {
+      if (!$('shutdownModal').hidden && !stopping) paintShutdownBody();
+    });
+  }
+}
+
+function paintShutdownBody() {
+  const r = shutdownReport();
+  $('shBody').innerHTML = r.html;
+  setHidden('shHandoverRow', !r.offerHandover);
+  if ($('shHandover')) $('shHandover').checked = r.offerHandover;
+}
+
+function closeShutdownModal() {
+  clearTimeout(shTimer);
+  // Cancelling means nothing was asked of the server, so the health dot and the
+  // polling back off have to come back too.
+  stopping = false;
+  setHidden('shutdownModal', true);
+}
+
+on('shutdownServer', openShutdownModal);
+on('shCancel', closeShutdownModal);
+
+/** Build a <p> safely - this markup is user data, not a template literal. */
+function para(text, cls) {
+  const el = document.createElement('p');
+  el.textContent = text;
+  if (cls) el.className = cls;
+  return el;
+}
+
+function shutdownDone() {
+  clearTimeout(shTimer);
+  setText('shTitle', 'Server stopped');
+  const body = $('shBody');
+  body.innerHTML = '';
+  body.append(
+    para('mobile-cfy stopped answering, so the server is stopped.'),
+    para('Prompts ComfyUI was already given keep running there.'),
+    para('Start it again with: bash start.sh  (in Termux)'),
+  );
+  const reload = document.createElement('button');
+  reload.className = 'btn primary sm';
+  reload.textContent = 'reload page';
+  reload.onclick = () => location.reload();
+  const row = document.createElement('div');
+  row.className = 'btnrow';
+  row.append(reload);
+  body.append(row);
+  setHidden('shGo', true);
+  setHidden('shCancel', true);
+  setHidden('shAgain', true);
+}
+
+function shutdownUnconfirmed() {
+  clearTimeout(shTimer);
+  setText('shTitle', 'Still answering');
+  const body = $('shBody');
+  body.innerHTML = '';
+  body.append(
+    para('The server is still answering after ~17 seconds, so it has not stopped. Check the Termux window for a message.', 'bad'),
+    para('A queued job can hold the exit up only if it is mid-request; otherwise stop.sh from Termux will do it.'),
+  );
+  setHidden('shGo', false);
+  setText('shGo', 'try shutting down again');
+  setHidden('shAgain', false);
+  setHidden('shCancel', false);
+}
+
+/**
+ * Poll until the socket refuses, then say so. The delay is the point: a server
+ * that has not exited yet answers normally, so the loop is what separates "it
+ * is coming down" from "it is stuck".
+ */
+function watchForShutdown({ attempts = 24, delay = 700 } = {}) {
+  const wait = async (i) => {
+    if (i > 0) {
+      setText('shTitle', 'Shutting down');
+      const w = $('shWaitText');
+      if (w) w.textContent = 'waiting for the server to stop answering…';
+    }
+    try {
+      if ((await fetch('/api/health', { cache: 'no-store' })).ok) {
+        if (i >= attempts) return shutdownUnconfirmed();
+        shTimer = setTimeout(() => wait(i + 1), delay);
+        return;
+      }
+    } catch {
+      // A refused connection is the answer we wanted.
+    }
+    shutdownDone();
+  };
+  wait(0);
+}
+
+on('shGo', async () => {
+  setDisabled('shGo', true);
+  setHidden('shCancel', true);
+  setText('shTitle', 'Shutting down');
+  setText('shGo', 'shutting down…');
+  $('shBody').innerHTML = '<p class="shwait"><i></i><span id="shWaitText">asking the server to stop…</span></p>';
+  stopping = true;
+  let note = null;
+  try {
+    const r = await api('/api/shutdown', {
+      method: 'POST',
+      body: JSON.stringify({ handover: $('shHandover')?.checked === true }),
+    });
+    if (r.handover?.failures?.length) note = `${r.handover.failures.length} prompt(s) could not be handed over`;
+  } catch (e) {
+    // A 403 is a refusal and must be shown; a dead socket means it stopped
+    // before it could answer, which the poll below confirms either way.
+    if (e.status) {
+      stopping = false;
+      closeShutdownModal();
+      setText('shutdownMsg', e.message);
+      toast(e.message);
+      return;
+    }
+  }
+  watchForShutdown();
+  if (note) toast(note);
+});
+
+on('shAgain', () => {
+  setHidden('shAgain', true);
+  watchForShutdown();
+});
 
 $('wfUpload').onchange = async () => {
   const file = $('wfUpload').files[0];
