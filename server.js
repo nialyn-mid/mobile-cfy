@@ -146,6 +146,9 @@ route('GET', '/api/health', async (req, res) => {
     token: { configured: client.hasToken, source: path.basename(envFilePath()) },
     comfy: { host: config().comfy.host, port: config().comfy.port, state: 'unknown' },
     downloadDir: { path: P.downloadDir, exists: fs.existsSync(P.downloadDir) },
+    // Carried here because this is the poll the page already makes: it is how
+    // the UI learns that a queue paused for the network is worth resuming again.
+    queue: runner.queueState(),
   };
   if (!client.hasToken) body.comfy.state = 'no-token';
   else {
@@ -311,7 +314,23 @@ route('POST', '/api/generate', async (req, res) => {
   json(res, 202, job);
 });
 
-route('GET', '/api/jobs', async (req, res) => json(res, 200, { jobs: runner.list().slice(-20) }));
+route('GET', '/api/jobs', async (req, res) =>
+  json(res, 200, { jobs: runner.list().slice(-20), queue: runner.queueState() }),
+);
+
+// The queue is controllable: hold it when the phone is about to lose the
+// network, resume when the network is back, and dump everything queued into
+// ComfyUI itself so the work survives the phone walking away.
+route('GET', '/api/queue', async (req, res) => json(res, 200, runner.queueState()));
+
+route('POST', '/api/queue/pause', async (req, res) => json(res, 200, runner.pause('manual')));
+
+route('POST', '/api/queue/resume', async (req, res) => json(res, 200, runner.resume()));
+
+route('POST', '/api/queue/submit-all', async (req, res) => {
+  const report = await runner.submitAll();
+  json(res, 200, { ...report, queue: runner.queueState() });
+});
 
 route('GET', '/api/jobs/:id', async (req, res, url, { id }) => {
   const job = runner.get(id);
@@ -363,17 +382,25 @@ route('GET', '/api/events', async (req, res) => {
     'X-Accel-Buffering': 'no',
   });
   const send = (snap) => res.write(`data: ${JSON.stringify(snap)}\n\n`);
+  // The queue's own state travels as a tagged message: a paused queue changes
+  // nothing about any job, so without this the pause button would only learn
+  // about it on the next poll. It goes FIRST, because "is the queue held?" is
+  // what the client needs before it can make sense of any job snapshot.
+  send({ type: 'queue', queue: runner.queueState() });
   // Replay current state so a page that just loaded is not blind until the next
   // update - several jobs can be in flight and each only emits when it changes.
   for (const snap of runner.list()) send(snap);
   const onUpdate = (snap) => send(snap);
+  const onQueue = (queue) => send({ type: 'queue', queue });
   const ping = setInterval(() => res.write(': ping\n\n'), 15000);
   ping.unref?.();
   const cleanup = () => {
     clearInterval(ping);
     runner.off('update', onUpdate);
+    runner.off('queue', onQueue);
   };
   runner.on('update', onUpdate);
+  runner.on('queue', onQueue);
   req.on('close', cleanup);
 });
 

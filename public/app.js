@@ -38,6 +38,10 @@ const state = {
   slotUrls: [null, null, null, null],
   job: null,                          // the job the detail panel is showing
   jobs: new Map(),                    // every job we know about, by id
+  // The queue's own state: paused, why, and how many prompts are sitting in
+  // ComfyUI waiting to be watched. Kept apart from the jobs because a paused
+  // queue changes no job at all - only the button and the banner care.
+  queue: { paused: false, reason: null, waiting: 0, running: 0, submitted: 0 },
   es: null,
   gallery: [],
   history: [],
@@ -99,15 +103,31 @@ async function copyText(text) {
   }
 }
 
+let resumeOffered = false;
+
 async function refreshHealth() {
   const dot = $('healthDot');
   const text = $('healthText');
   try {
     const h = await api('/api/health');
     const c = h.comfy;
+    if (h.queue) applyQueue(h.queue);
     if (c.state === 'ok') {
-      dot.className = 'dot ok';
-      text.textContent = `ComfyUI ${h.comfy.info?.comfyui_version ?? ''}`.trim();
+      // ComfyUI answers again while a queue is still held for the network. Say
+      // so once - the resume stays a deliberate tap, because building a queue
+      // offline is a normal thing to do here and a health blip should not
+      // quietly start four generations.
+      if (state.queue?.paused && state.queue.reason === 'connection') {
+        dot.className = 'dot warn';
+        text.textContent = 'back online';
+        if (!resumeOffered) {
+          resumeOffered = true;
+          toast('ComfyUI is back — press resume');
+        }
+      } else {
+        dot.className = 'dot ok';
+        text.textContent = `ComfyUI ${h.comfy.info?.comfyui_version ?? ''}`.trim();
+      }
     } else if (c.state === 'unauthorized') {
       dot.className = 'dot bad';
       text.textContent = 'auth failed';
@@ -448,7 +468,11 @@ $('generate').onclick = async () => {
     autoGrow($('prompt'));
     if (hadRefs) clearSlots();
     saveForm();
-    $('prompt').focus();
+    // Let go of the prompt box. Refocusing it (or simply leaving it focused)
+    // threw the on-screen keyboard straight back up over the queue and the job
+    // that was just submitted, and this app is mostly used one-handed while
+    // something is generating - the next prompt can wait for a scroll-up.
+    if (document.activeElement === $('prompt')) $('prompt').blur();
     if (hadRefs) toast('references cleared');
   } catch (e) {
     if (!showBindingError(e)) showError(e.errors ? e.errors.join('\n') : e.message);
@@ -480,6 +504,12 @@ function connectEvents() {
 }
 
 function onJobUpdate(snap) {
+  // Queue messages share this stream and carry no job id - they are about the
+  // queue itself (paused, resumed, something handed to ComfyUI).
+  if (snap?.type === 'queue') {
+    applyQueue(snap.queue);
+    return;
+  }
   const known = state.jobs.has(snap.id);
   state.jobs.set(snap.id, snap);
   if (!known) toast(snap.status === 'queued' ? 'queued' : `job ${snap.status}`);
@@ -497,24 +527,33 @@ function onJobUpdate(snap) {
   }
 }
 
-/** Running first, then queued (in order), then the most recent finished. */
+/** Running first, then paused (it owns the connection problem), then queued. */
 function pickActive() {
   const all = [...state.jobs.values()];
   return (
     all.find((j) => j.status === 'running')
+    ?? all.find((j) => j.status === 'paused')
     ?? all.find((j) => j.status === 'queued')
     ?? all.slice().reverse().find((j) => ['done', 'error', 'cancelled'].includes(j.status))
     ?? null
   );
 }
 
-const inFlight = (j) => j.status === 'queued' || j.status === 'running';
+const inFlight = (j) => j.status === 'queued' || j.status === 'running' || j.status === 'paused';
+
+/** Runs waiting in ComfyUI that nobody is watching yet. */
+const unsubmitted = (j) => j.runs?.some((r) => !r.promptId && ['pending', 'queued'].includes(r.status));
 
 function renderQueue() {
   const wrap = $('queueList');
   const jobs = [...state.jobs.values()];
   const busy = jobs.filter(inFlight);
   const rows = busy.slice();
+  const q = state.queue ?? {};
+  const paused = q.paused === true;
+  // How many runs could still be handed over: the running job's tail plus
+  // everything queued behind it.
+  const handoff = jobs.filter((j) => inFlight(j) && unsubmitted(j)).length;
 
   // The most recent finished job that is not the one on screen. Queueing three
   // jobs means the detail panel follows whatever is running, so without this
@@ -533,7 +572,8 @@ function renderQueue() {
     const row = document.createElement('div');
     row.className = 'qrow' + (j.status === 'running' ? ' running' : finished ? ' finished' : '');
     const dot = document.createElement('span');
-    dot.textContent = j.status === 'running' ? '▶' : finished ? '✓' : '⏳';
+    dot.textContent =
+      j.status === 'running' ? '▶' : finished ? '✓' : j.status === 'paused' ? '⏸' : '⏳';
     const text = document.createElement('span');
     text.className = 'qtext';
     text.textContent = truncate(j.spec?.prompt ?? '(no prompt)', 42);
@@ -556,6 +596,14 @@ function renderQueue() {
         bar.append(fill);
         row.append(bar);
       }
+    } else if (j.status === 'paused') {
+      // Say what it is waiting for, not just that it is stopped: a run already
+      // in ComfyUI's queue is still being worked on up there, and this app is
+      // only waiting to start watching it again.
+      const submitted = j.runs.filter((r) => r.promptId && r.status !== 'done' && r.status !== 'error').length;
+      meta.textContent = `paused · ${j.summary.done}/${j.summary.total} runs`
+        + (submitted ? ` · ${submitted} at ComfyUI` : '');
+      row.append(dot, text, meta);
     } else {
       meta.textContent = j.queuePosition
         ? `queued ${j.queuePosition} of ${j.queueLength}`
@@ -582,7 +630,76 @@ function renderQueue() {
   if (behind > 0) {
     hint.textContent = `${behind} job${behind > 1 ? 's' : ''} queued — keep typing and press Generate to add more`;
   }
+
+  // The controls only exist while there is a queue to control. A paused queue
+  // always shows them, even with nothing behind it: the resume button is the
+  // only way back from a pause, and hiding it over an empty queue would trap
+  // the next Generate in a pause nobody can see.
+  const bar = $('queueBar');
+  bar.hidden = busy.length === 0 && !paused;
+  const toggle = $('queueToggle');
+  toggle.textContent = paused ? '▶ resume queue' : 'pause queue';
+  toggle.classList.toggle('primary', paused);
+  toggle.classList.toggle('ghost', !paused);
+  const send = $('queueSubmitAll');
+  send.disabled = handoff === 0 || paused;
+  send.title = handoff === 0
+    ? 'nothing left to hand over'
+    : `submit every remaining run of ${handoff} job${handoff > 1 ? 's' : ''} to ComfyUI now`;
+
+  const note = $('queuePaused');
+  note.hidden = !paused;
+  if (paused) {
+    note.textContent = q.reason === 'connection'
+      ? `paused — ComfyUI is not answering (${q.message || 'no connection'}). ${q.waiting ?? 0} job(s) held here; press resume when you are back on the network.`
+      : `paused — ${q.waiting ?? 0} job(s) held here. Press resume to carry on.`;
+  }
   $('generate').textContent = busy.length ? 'Add to queue' : 'Generate';
+}
+
+on('queueToggle', async () => {
+  const resuming = state.queue?.paused === true;
+  setDisabled('queueToggle', true);
+  try {
+    state.queue = await api(resuming ? '/api/queue/resume' : '/api/queue/pause', { method: 'POST' });
+    renderQueue();
+    toast(resuming ? 'queue resumed' : 'queue paused');
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    setDisabled('queueToggle', false);
+  }
+});
+
+on('queueSubmitAll', async () => {
+  setDisabled('queueSubmitAll', true);
+  setText('queueSubmitAll', 'sending…');
+  try {
+    const r = await api('/api/queue/submit-all', { method: 'POST' });
+    if (r.queue) state.queue = r.queue;
+    const parts = [`${r.runs} run${r.runs === 1 ? '' : 's'} sent to ComfyUI`];
+    if (r.alreadySubmitted) parts.push(`${r.alreadySubmitted} already there`);
+    if (r.failures?.length) parts.push(`${r.failures.length} failed: ${r.failures[0].message}`);
+    toast(parts.join(' · '));
+    renderQueue();
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    setDisabled('queueSubmitAll', false);
+    setText('queueSubmitAll', 'send all to ComfyUI');
+    renderQueue();
+  }
+});
+
+/** Fold a queue message from /api/events or /api/jobs into the state. */
+function applyQueue(q) {
+  if (!q) return;
+  const wasPaused = state.queue?.paused === true;
+  state.queue = q;
+  // A new hold deserves a new "ComfyUI is back" offer, so the once-only flag is
+  // cleared the moment the queue is held again rather than after a resume.
+  if (q.paused && !wasPaused) resumeOffered = false;
+  renderQueue();
 }
 
 let pollTimer = null;
@@ -590,8 +707,9 @@ async function pollJobs() {
   clearTimeout(pollTimer);
   if (state.es) return;
   try {
-    const { jobs } = await api('/api/jobs');
+    const { jobs, queue } = await api('/api/jobs');
     for (const snap of jobs) state.jobs.set(snap.id, snap);
+    applyQueue(queue);
     renderQueue();
     const active = pickActive();
     if (active) { state.job = active; renderJob(active); }
@@ -631,6 +749,11 @@ function renderJob(job) {
 
   const bits = [];
   if (job.status === 'queued') bits.push('waiting for the running job to finish');
+  if (job.status === 'paused') {
+    bits.push(state.queue?.reason === 'connection'
+      ? 'held - ComfyUI is not answering; nothing is lost'
+      : 'held - press resume to carry on');
+  }
   if (cur) {
     bits.push(`run ${cur.index + 1} of ${job.summary.total}`);
     if (cur.queue != null && cur.queue > 0) bits.push(`queue +${cur.queue}`);

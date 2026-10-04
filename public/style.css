@@ -182,6 +182,9 @@ label.btn { display: inline-block; }
 .note.top { margin: 0 0 10px; }
 /* A saved-but-wrong binding has to out-shout the quiet grey notes above it. */
 .note.bad { color: var(--bad); font-weight: 600; }
+/* A held queue is not an error - nothing was lost - but it is the one thing
+   standing between the operator and the work they queued, so it is loud. */
+.note.warn { color: var(--warn); font-weight: 600; }
 
 /* -------------------------------------------------------------- history */
 .hrow {

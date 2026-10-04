@@ -69,6 +69,13 @@ ComfyUI you must restart ComfyUI, copy the new hash from its console, then press
 | Prompt refresh | When the override switch (node `68`) fires — see below |
 | Reference images | Up to 4, uploaded to ComfyUI's input dir before the run |
 
+Pressing **Generate** clears the prompt box and lets go of the keyboard, on
+purpose: the keyboard popping up over the queue you just added to is worse than
+scrolling up to type the next one. Attached reference images are cleared at the
+same time (with a `references cleared` toast), because the prompt they were
+attached to is gone. Pressing Generate on an *empty* prompt still raises the
+keyboard, since that one needs typing.
+
 > **A broken binding will not run silently.** Every binding is checked against
 > `workflow_api.json` before a job is accepted; if one points at a node that is
 > gone, Generate refuses with the exact reason ("node 43 is not in the
@@ -167,6 +174,48 @@ Above the Generate button a queue strip shows everything in flight:
 The detail panel always follows whatever is actually running, so you never have to
 watch a finished job. It repaints itself after a page reload too — the server
 replays the current job list on connect.
+
+### Walking off the network
+
+Two buttons appear next to the queue strip while there is anything in flight:
+
+**`send all to ComfyUI`** hands every run the app is still holding over to
+ComfyUI's own queue in one go — the rest of the running job's batch *and* every
+job queued behind it — and then keeps watching them. Use it when you are about to
+leave the local network: the work is now the server's problem, the phone can
+close, and the images still land in the download folder. Pressing it twice costs
+nothing; a run that is already at ComfyUI is never sent again, so no seed is
+burnt twice and no duplicate image appears.
+
+**`pause queue` / `▶ resume queue`** holds the queue by hand, and it also engages
+itself. If ComfyUI stops answering — you left range, the PC slept — the queue
+pauses itself the moment the connection fails, says so in amber under the strip,
+and **nothing is lost**:
+
+- no run is dropped and no run is marked failed;
+- the job shows as `paused`, not `error`, and keeps no end time;
+- requests you add while offline are accepted and queued as usual, so you can
+  build a whole batch of work with no server in sight;
+- resume picks up exactly the runs that are missing. A prompt ComfyUI was already
+  working on is re-attached to and watched, never submitted a second time.
+
+Resume is always a deliberate tap. When the health check notices ComfyUI is back
+the dot turns amber and says `back online` with a `press resume` toast — it will
+not start four generations behind your back just because a ping succeeded.
+
+`send all to ComfyUI` is disabled while the queue is held (there is nowhere to
+send it to yet); the pause bar stays visible even over an empty queue, because
+the resume button is the only way back out of a pause.
+
+Both buttons are also plain endpoints, if you would rather use them from a
+script: `GET /api/queue`, `POST /api/queue/pause`, `POST /api/queue/resume`,
+`POST /api/queue/submit-all`. `GET /api/health` and `GET /api/jobs` both carry
+the same `queue` object, and the event stream sends it as
+`{"type":"queue","queue":{…}}` — first, before any job snapshot.
+
+One thing a pause deliberately does **not** do: survive a server restart. The
+queue lives in memory, so `node server.js` again starts with an empty one. Jobs
+whose prompts are already at ComfyUI keep going there and will still download.
 
 ### Viewing images
 
@@ -350,6 +399,13 @@ this happens to a job of its own.
 connection while the phone was asleep; the UI falls back to polling on its own.
 The job itself is unaffected.
 
+**The queue says `paused` and nothing is happening.** ComfyUI stopped answering,
+so the queue held itself instead of failing every run one by one. Nothing is lost
+— press `▶ resume queue` when the server is reachable again, or `send all to
+ComfyUI` if you would rather hand the work over first. If the server was
+restarted, the in-memory queue is empty by definition (see *Walking off the
+network*).
+
 **Generation is slow.** The prompt enhancer runs a Qwen3-VL model and dominates
 runtime — minutes per run is normal. Turn it off for a much faster turnaround.
 
@@ -361,9 +417,16 @@ runtime — minutes per run is normal. Turn it off for a much faster turnaround.
 npm test      # node --test "test/**/*.test.js"
 ```
 
-Tests cover config merging, payload construction, the run matrix, prompt-text
-capture, download naming, upload sniffing and multipart parsing, and the history
-store. 99 of them; they need no network and no ComfyUI.
+Tests cover config merging and the binding/value migrations, payload construction,
+the run matrix, prompt-text capture, download naming, upload sniffing and
+multipart parsing, the history store, the bindings panel's verdict rendering, and
+the queue — bulk submit, an auto-paused queue, offline building, resume, and
+cancel. 134 of them; they need no network and no ComfyUI (`test/queue.test.js`
+runs its own fake ComfyUI on a random port).
+
+`test/reset.test.js` and `test/queue.test.js` both start a second server on port
+3082 with `MOBILE_CFY_ROOT` pointed at a temp directory, so they never touch the
+instance you are using.
 
 The server runs unchanged on Windows for development:
 
@@ -380,7 +443,7 @@ config.json        generated; all node ids and paths
 workflow_api.json  the ComfyUI workflow, API format
 lib/               config, comfy, ws, payload, runner, download, gallery,
                    history, uploads, multipart, env
-public/            index.html, app.js, style.css  (no build step)
+public/            index.html, app.js, style.css, bindmark.js  (no build step)
 test/              node --test
 data/
   history.json     prompt memory (300 newest)

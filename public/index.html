@@ -88,7 +88,6 @@
       Reference images
       <span class="pill" id="slotPill">0 / 4</span>
     </div>
-    <p class="note">The enhancer reads the attached images too, so a prompt with references is still enhanced.</p>
     <div id="slots" class="slots"></div>
     <div class="btnrow">
       <button class="btn ghost sm" id="fillFromGallery" type="button">⤓ last 4 from gallery</button>
@@ -98,6 +97,11 @@
 
   <button id="generate" class="btn primary big" type="button">Generate</button>
   <p class="note" id="queueHint" hidden></p>
+  <p class="note warn" id="queuePaused" hidden></p>
+  <div class="btnrow" id="queueBar" hidden>
+    <button id="queueToggle" class="btn ghost sm" type="button">pause queue</button>
+    <button id="queueSubmitAll" class="btn ghost sm" type="button">send all to ComfyUI</button>
+  </div>
   <div id="queueList" class="queuebar" hidden></div>
   <p class="err" id="genErr" hidden></p>
 
