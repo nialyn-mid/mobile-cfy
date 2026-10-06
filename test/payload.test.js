@@ -16,6 +16,8 @@ import {
   setBinding,
   newSeed,
   ASPECT_RATIOS,
+  validateUpscale,
+  buildUpscalePayload,
 } from '../lib/payload.js';
 import { runPayloadOptions } from '../lib/runner.js';
 
@@ -365,11 +367,19 @@ test('collectText falls back to files-only when there is no inline text', () => 
 test('the SaveText node is fed by the same wire the text encoder reads', () => {
   // This is the whole basis for labelling the capture honest: if 181 tapped a
   // different wire we would be showing a prompt the image was never made from.
-  // Both read node 176 "Prompt Enhance On/Off" directly now - the old routing
-  // switch (178) was removed from the workflow.
-  assert.deepEqual(WORKFLOW['181'].inputs.text, ['176', 0]);
-  assert.deepEqual(WORKFLOW['229'].inputs.prompts, ['176', 0]);
+  // Both now read node 257 "Concatenate Text", which joins node 176's output
+  // (enhanced or raw) with node 256 "Postprompt" and is itself what the encoder
+  // reads - so the postprompt is in the image AND in the saved text, with no
+  // capture work of ours.
+  assert.deepEqual(WORKFLOW['181'].inputs.text, ['257', 0]);
+  assert.deepEqual(WORKFLOW['229'].inputs.prompts, ['257', 0]);
   assert.equal(WORKFLOW['181'].class_type, 'SaveText');
+  assert.equal(WORKFLOW['257'].class_type, 'StringConcatenate');
+  // Both ends of the concatenation: the branch output, and the postprompt.
+  assert.deepEqual(WORKFLOW['257'].inputs.string_a, ['176', 0]);
+  assert.deepEqual(WORKFLOW['257'].inputs.string_b, ['256', 0]);
+  // No delimiter, which is why a postprompt keeps its own leading newlines.
+  assert.equal(WORKFLOW['257'].inputs.delimiter, '');
 });
 
 // ----------------------------------------------------- aspect + LoRA writes
@@ -516,6 +526,57 @@ test('validateJob rejects an unknown refresh mode', () => {
   assert.equal(validateJob({ ...base, refresh: 'sometimes' }).ok, false);
 });
 
+// --------------------------------------------------------------- postprompt
+
+test('validateJob keeps the postprompt exactly as typed, newlines and all', () => {
+  // The prompt is trimmed but this is not: node 257 concatenates with an empty
+  // delimiter, so a leading newline IS how the user separates the two ideas.
+  // Trimming here would silently glue the postprompt onto the last word.
+  const r = validateJob({ prompt: 'x', megapixels: 1, batch: 1, shuffle: 1, postprompt: '\n\nwear a red coat' });
+  assert.equal(r.ok, true, r.errors.join('; '));
+  assert.equal(r.postprompt, '\n\nwear a red coat');
+});
+
+test('validateJob reads an absent or blank postprompt as empty text', () => {
+  const base = { prompt: 'x', megapixels: 1, batch: 1, shuffle: 1 };
+  assert.equal(validateJob(base).postprompt, '');
+  assert.equal(validateJob({ ...base, postprompt: '' }).postprompt, '');
+  assert.equal(validateJob({ ...base, postprompt: '   ' }).postprompt, '   ', 'kept verbatim');
+  assert.equal(validateJob({ ...base, postprompt: 42 }).postprompt, '', 'a number is not text');
+});
+
+test('validateJob refuses a postprompt that is not text at all', () => {
+  const r = validateJob({ prompt: 'x', megapixels: 1, batch: 1, shuffle: 1, postprompt: 42 });
+  assert.equal(r.ok, false);
+  assert.ok(r.errors.includes('postprompt must be text'), r.errors.join('; '));
+});
+
+test('a non-blank postprompt is written verbatim into node 256', () => {
+  const wf = buildRunPayload(WORKFLOW, B, {
+    prompt: 'a cat',
+    images: [],
+    postprompt: '\n\nin the style of a pencil sketch',
+  });
+  assert.equal(wf['256'].inputs.value, '\n\nin the style of a pencil sketch');
+});
+
+test('a blank postprompt leaves the workflow node exactly as exported', () => {
+  // Nothing to say must mean "leave the graph alone", not "write an empty
+  // string over whatever the user left in the ComfyUI editor".
+  const original = WORKFLOW['256'].inputs.value;
+  assert.equal(typeof original, 'string', 'node 256 ships with text of its own');
+  for (const postprompt of [undefined, null, '', '   ', 42]) {
+    const wf = buildRunPayload(WORKFLOW, B, { prompt: 'a cat', images: [], postprompt });
+    assert.equal(wf['256'].inputs.value, original, `postprompt ${JSON.stringify(postprompt)}`);
+  }
+});
+
+test('buildRunPayload never mutates the workflow file it was handed', () => {
+  const before = JSON.stringify(WORKFLOW['256'].inputs.value);
+  buildRunPayload(WORKFLOW, B, { prompt: 'a cat', images: [], postprompt: 'a red coat' });
+  assert.equal(JSON.stringify(WORKFLOW['256'].inputs.value), before);
+});
+
 // ------------------------------------------------------------ slot shape
 
 test('normalizeSlots accepts the object form the web UI sends', () => {
@@ -537,4 +598,191 @@ test('a 5th image in the slots form is a 400, not a silent drop', () => {
   const r = validateJob({ prompt: 'x', megapixels: 4, batch: 1, shuffle: 1, slots: ['a', 'b', 'c', 'd', 'e'] });
   assert.equal(r.ok, false);
   assert.match(r.errors.join('; '), /at most 4 images/);
+});
+
+// ------------------------------------------------------------------- seed
+
+test('a blank seed means "roll a fresh one per run"', () => {
+  const base = { prompt: 'x', megapixels: 1, batch: 1, shuffle: 1 };
+  assert.equal(validateJob({ ...base }).seed, null);
+  assert.equal(validateJob({ ...base, seed: null }).seed, null);
+  assert.equal(validateJob({ ...base, seed: '' }).seed, null, 'the page sends an empty string');
+  assert.equal(validateJob({ ...base, seed: '   ' }).seed, null, 'and a stray space is still blank');
+  assert.equal(validateJob({ ...base, seed: 0 }).seed, 0, 'zero is a real seed, not a blank one');
+});
+
+test('a pinned seed survives as a number, whichever way the page sent it', () => {
+  const base = { prompt: 'x', megapixels: 1, batch: 1, shuffle: 1 };
+  assert.equal(validateJob({ ...base, seed: 12345 }).seed, 12345);
+  assert.equal(validateJob({ ...base, seed: '12345' }).seed, 12345, 'a text input sends a string');
+  assert.equal(validateJob({ ...base, seed: ' 4294967295 ' }).seed, 4294967295, 'the whole 32 bit range');
+});
+
+test('a seed that is not a whole number is refused, and never used', () => {
+  const base = { prompt: 'x', megapixels: 1, batch: 1, shuffle: 1 };
+  for (const bad of ['abc', '12abc', 1.5, -1, 'NaN', true, 2 ** 53]) {
+    const r = validateJob({ ...base, seed: bad });
+    assert.equal(r.ok, false, `${JSON.stringify(bad)} should not be a seed`);
+    assert.match(r.errors.join('; '), /seed must be blank or a whole number/);
+    assert.equal(r.seed, null, 'a bad seed must not survive as a usable number');
+  }
+});
+
+test('a pinned seed is the one that reaches node 37', () => {
+  const wf = buildRunPayload(WORKFLOW, B, { prompt: 'x', seed: 987654321 });
+  assert.equal(wf[String(B.seed.node)].inputs[B.seed.input], 987654321);
+});
+
+// ------------------------------------------------- the upscale workflow
+
+const UP = JSON.parse(fs.readFileSync(path.join(ROOT, 'upscale_api.json'), 'utf8'));
+const UB = DEFAULTS.upscaleBindings;
+
+/** The way the Upscale tab calls it: one image, a multiplier, nothing else. */
+const UPK = (extra = {}) => ({ slots: [{ ref: 'abc123' }], scale: 2, ...extra });
+const upPayload = (extra = {}) =>
+  buildUpscalePayload(UP, UB, { image: 'mobilecfy_1.png', scale: 2, scaleToDim: false, seed: 1, guidance: '', ...extra });
+
+test('every default upscale binding points at a real node and a real input', () => {
+  for (const [key, binding] of Object.entries(UB)) {
+    const node = UP[String(binding.node)];
+    assert.ok(node, `upscale binding ${key}: node ${binding.node} missing from upscale_api.json`);
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(node.inputs ?? {}, binding.input),
+      `upscale binding ${key}: node ${binding.node} (${node.class_type}) has no input "${binding.input}"`,
+    );
+  }
+});
+
+test('the upscale bindings are the nodes the graph is actually built from', () => {
+  // By name, not by id: a re-export that renumbers everything should fail here
+  // with "this binding now points at something else" instead of quietly writing
+  // the wrong number into an unrelated node.
+  const title = (binding) => UP[String(binding.node)]?._meta?.title;
+  assert.equal(title(UB.scale), 'Scale Multiplier');
+  assert.equal(title(UB.scaleToDim), 'Scale To Dim');
+  assert.equal(title(UB.targetWidth), 'Target Width');
+  assert.equal(title(UB.targetHeight), 'Target Height');
+  assert.equal(title(UB.guidance), 'Guidance Prompt');
+  assert.equal(UP[String(UB.image.node)].class_type, 'LoadImage');
+  assert.equal(UP[String(UB.seed.node)].class_type, 'SeedNode');
+  // The second half of the size switch is a plain ComfySwitchNode with no title
+  // of its own, so it is identified by what it feeds: the encoder's height.
+  const second = UP[String(UB.scaleToDimHeight.node)];
+  assert.equal(second.class_type, 'ComfySwitchNode');
+  assert.deepEqual(second.inputs.switch, false, 'the exported graph hard-wires it off');
+});
+
+test('an upscale with no image is refused, and so is a second one', () => {
+  const none = validateUpscale({ scale: 2 });
+  assert.equal(none.ok, false);
+  assert.match(none.errors.join('; '), /an image to upscale is required/);
+
+  const two = validateUpscale({ slots: [{ ref: 'a' }, { ref: 'b' }], scale: 2 });
+  assert.equal(two.ok, false);
+  assert.match(two.errors.join('; '), /one image at a time/);
+});
+
+test('a blank or missing multiplier means 2, and nonsense is refused', () => {
+  assert.equal(validateUpscale(UPK()).scale, 2);
+  assert.equal(validateUpscale(UPK({ scale: '' })).scale, 2, 'the page sends a string');
+  assert.equal(validateUpscale(UPK({ scale: null })).scale, 2);
+  assert.equal(validateUpscale(UPK({ scale: '1.25' })).scale, 1.25);
+  for (const bad of [0, -1, 17, 'abc', NaN, Infinity, true]) {
+    const r = validateUpscale(UPK({ scale: bad }));
+    assert.equal(r.ok, false, `${JSON.stringify(bad)} should not be a scale`);
+    assert.match(r.errors.join('; '), /scale must be a number above 0 and at most 16/);
+    assert.equal(r.scale, 2, 'and it falls back to 2 rather than staying broken');
+  }
+});
+
+test('the target size is only checked when the switch will read it', () => {
+  // Off: the two numbers are unread, so blank ones are not a mistake.
+  const off = validateUpscale(UPK({ targetWidth: '', targetHeight: '' }));
+  assert.equal(off.ok, true);
+  assert.equal(off.targetWidth, null);
+  assert.equal(off.targetHeight, null);
+
+  const on = validateUpscale(UPK({ scaleToDim: true, targetWidth: '3000', targetHeight: '2000' }));
+  assert.equal(on.ok, true);
+  assert.equal(on.targetWidth, 3000);
+  assert.equal(on.targetHeight, 2000);
+
+  for (const [field, bad] of [
+    ['targetWidth', ''], ['targetWidth', 63], ['targetWidth', 8193],
+    ['targetHeight', 12.5], ['targetHeight', 'wide'], ['targetHeight', null],
+  ]) {
+    const r = validateUpscale(UPK({ scaleToDim: true, targetWidth: '3000', targetHeight: '2000', [field]: bad }));
+    assert.equal(r.ok, false, `${field}=${JSON.stringify(bad)} should be refused when the switch is on`);
+    assert.match(r.errors.join('; '), new RegExp(`${field} must be a whole number between 64 and 8192`));
+  }
+});
+
+test('the seed rules are the same ones a generate job obeys', () => {
+  assert.equal(validateUpscale(UPK()).seed, null, 'blank means random');
+  assert.equal(validateUpscale(UPK({ seed: 0 })).seed, 0, 'zero is a seed, not a blank');
+  assert.equal(validateUpscale(UPK({ seed: ' 4242 ' })).seed, 4242);
+  const bad = validateUpscale(UPK({ seed: 'abc' }));
+  assert.equal(bad.ok, false);
+  assert.match(bad.errors.join('; '), /seed must be blank or a whole number/);
+});
+
+test('the multiplier, seed and image name all reach their own nodes', () => {
+  const wf = upPayload({ scale: 1.25, seed: 777 });
+  assert.equal(wf[String(UB.scale.node)].inputs[UB.scale.input], 1.25);
+  assert.equal(wf[String(UB.seed.node)].inputs[UB.seed.input], 777);
+  assert.equal(wf[String(UB.image.node)].inputs[UB.image.input], 'mobilecfy_1.png');
+});
+
+test('an unpinned upscale still gets a seed of its own', () => {
+  const wf = upPayload({ seed: null });
+  const seed = wf[String(UB.seed.node)].inputs[UB.seed.input];
+  assert.equal(Number.isInteger(seed) && seed >= 0, true, `not a usable seed: ${seed}`);
+});
+
+test('scale to a size writes BOTH halves of the switch, or the picture is stretched', () => {
+  const on = upPayload({ scaleToDim: true, targetWidth: 3000, targetHeight: 2000 });
+  assert.equal(on[String(UB.scaleToDim.node)].inputs[UB.scaleToDim.input], true);
+  assert.equal(on[String(UB.scaleToDimHeight.node)].inputs[UB.scaleToDimHeight.input], true);
+  assert.equal(on[String(UB.targetWidth.node)].inputs[UB.targetWidth.input], 3000);
+  assert.equal(on[String(UB.targetHeight.node)].inputs[UB.targetHeight.input], 2000);
+
+  const off = upPayload({ scaleToDim: false, targetWidth: 3000, targetHeight: 2000 });
+  assert.equal(off[String(UB.scaleToDim.node)].inputs[UB.scaleToDim.input], false);
+  assert.equal(off[String(UB.scaleToDimHeight.node)].inputs[UB.scaleToDimHeight.input], false);
+  // The numbers are not read, so the graph keeps its own and the two scales stay
+  // in step. Nothing was silently half-applied.
+  assert.equal(off[String(UB.targetWidth.node)].inputs[UB.targetWidth.input], 2048);
+  assert.equal(off[String(UB.targetHeight.node)].inputs[UB.targetHeight.input], 2048);
+});
+
+test('guidance is added after the graph own instruction, and a blank box changes nothing', () => {
+  const typed = upPayload({ guidance: 'keep the grain' });
+  assert.equal(typed[String(UB.guidance.node)].inputs[UB.guidance.input], 'keep the grain');
+  // 543 concatenates 522 (the workflow's own "Upscale Prompt") with 544, so the
+  // box must not become the whole prompt - and 522 is never written to at all.
+  assert.equal(typed['522'].inputs.value, UP['522'].inputs.value);
+  assert.match(typed['522'].inputs.value, /Enhance this image/);
+
+  const blank = upPayload({ guidance: '   ' });
+  assert.deepEqual(
+    blank[String(UB.guidance.node)].inputs[UB.guidance.input],
+    UP[String(UB.guidance.node)].inputs[UB.guidance.input],
+    'a blank box leaves whatever the editor had in it',
+  );
+});
+
+test('the payload is a copy - the workflow file itself is never touched', () => {
+  const before = JSON.stringify(UP);
+  upPayload({ scale: 4, seed: 9, scaleToDim: true, targetWidth: 1000, targetHeight: 1000, guidance: 'g' });
+  assert.equal(JSON.stringify(UP), before);
+});
+
+test('a binding pointing at a node that is not there is loud, not silent', () => {
+  // This is the bug class the whole binding system exists for: writing into a
+  // node id that no longer exists used to be a perfect no-op.
+  assert.throws(
+    () => buildUpscalePayload(UP, { ...UB, scale: { node: 9999, input: 'value' } }, { scale: 2, seed: 1 }),
+    /node 9999 is not in the workflow/,
+  );
 });

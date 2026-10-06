@@ -225,6 +225,13 @@ label.btn { display: inline-block; }
 .chip.warn { color: #d8a657; border-color: #d8a657; }
 .hrow-textbox { margin-top: 9px; border-top: 1px dashed var(--line); padding-top: 8px; }
 .hrow-textbar { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+/* The seeds sit between the setting chips and the captured prompts. */
+.hrow-seedbox { margin-top: 8px; }
+.hrow-seedbar { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.hrow-seedlabel {
+  font-size: 11px; color: var(--fg); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
 .flex1 { flex: 1 1 auto; }
 .mini {
   font-size: 10px; line-height: 1; padding: 5px 8px;
@@ -466,6 +473,31 @@ label.btn { display: inline-block; }
   overflow: auto;
 }
 .modal-card h2 { margin: 0 0 10px; font-size: 16px; }
+
+/* The upscale tab's "pick an image" grid. Square thumbs, because the point is
+   recognising the picture at a glance, not judging its shape. */
+.pickgrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.pickgrid .note { grid-column: 1 / -1; margin: 0; }
+.pickbtn {
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel2);
+  overflow: hidden;
+  aspect-ratio: 1;
+  line-height: 0;
+}
+.pickbtn img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.pickbtn:active { border-color: var(--accent); }
+
+/* A number the workflow is not reading must not look live. */
+.field:has(input:disabled) { opacity: .5; }
+.field:has(input:disabled) .lbl { text-decoration: line-through; }
 .modal-body { font-size: 13px; color: var(--fg); }
 .modal-body ul { margin: 8px 0; padding-left: 18px; color: var(--dim); }
 .modal-body li { margin-bottom: 4px; }

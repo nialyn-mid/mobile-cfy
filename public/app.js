@@ -2,6 +2,7 @@
 
 import { bindingMark } from './bindmark.js';
 import { durationBetween } from './durfmt.js';
+import { zoomAboutPoint } from './zoommath.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -49,6 +50,11 @@ const state = {
   history: [],
   collapsed: new Set(),          // gallery job ids folded away, from localStorage
   bindingTitles: new Map(),
+  // The Upscale tab has one image of its own: the upscale workflow has a single
+  // LoadImage, so sharing the four generate slots would mean picking which job a
+  // picture belongs to.
+  upImage: null,                  // null | { uploadId } | { ref }
+  upImageUrl: null,
 };
 
 const MAX_SLOTS = 4;
@@ -152,15 +158,29 @@ for (const btn of document.querySelectorAll('.tabbtn')) {
   btn.onclick = () => {
     document.querySelectorAll('.tabbtn').forEach((b) => b.classList.toggle('active', b === btn));
     const name = btn.dataset.tab;
-    for (const t of document.querySelectorAll('.tab')) t.classList.toggle('active', t.id === `tab-${name}`);
+    // A section may declare `data-for="a b"` to be SHARED: the queue strip and
+    // the job panel belong to Generate and Upscale alike, and they cannot simply
+    // be duplicated because element ids must stay unique. So they live in one
+    // section that opens on whichever of the named tabs was pressed.
+    for (const t of document.querySelectorAll('.tab')) {
+      const names = (t.dataset.for ?? '').split(/\s+/).filter(Boolean);
+      t.classList.toggle('active', names.length ? names.includes(name) : t.id === `tab-${name}`);
+    }
     if (name === 'gallery') loadGallery();
     if (name === 'history') loadHistory();
     if (name === 'settings') loadSettings();
     // A hidden textarea has no scrollHeight, so the box can only be measured
     // once its tab is actually on screen.
-    if (name === 'generate') autoGrow($('prompt'));
+    if (name === 'generate') { autoGrow($('prompt')); autoGrow($('postprompt')); }
+    if (name === 'upscale') autoGrow($('upGuidance'));
     window.scrollTo(0, 0);
   };
+}
+
+/** Open a tab by name (used when a gallery or history action lands elsewhere). */
+function showTab(name) {
+  const btn = [...document.querySelectorAll('.tabbtn')].find((b) => b.dataset.tab === name);
+  if (btn) btn.click();
 }
 
 // ------------------------------------------------------------- prompt sizing
@@ -180,6 +200,7 @@ function autoGrow(el) {
   el.style.overflowY = wanted > max ? 'auto' : 'hidden';
 }
 $('prompt').addEventListener('input', () => autoGrow($('prompt')));
+$('postprompt').addEventListener('input', () => autoGrow($('postprompt')));
 window.addEventListener('resize', () => autoGrow($('prompt')));
 
 // ------------------------------------------------------------------- slots
@@ -280,19 +301,6 @@ slotsEl.addEventListener('drop', async (e) => {
     });
   } catch (err) { toast(err.message); }
 });
-window.addEventListener('paste', (e) => {
-  const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith('image/'));
-  if (!item) return;
-  const file = item.getAsFile();
-  const fd = new FormData();
-  fd.append('file', file, 'pasted.png');
-  api('/api/uploads', { method: 'POST', body: fd }).then(({ uploads }) => {
-    const slot = state.slots.findIndex((s) => !s);
-    if (slot !== -1) setSlot(slot, { uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
-    toast('pasted image attached');
-  }).catch((err) => toast(err.message));
-});
-
 function clearSlots() {
   state.slots = state.slots.map(() => null);
   state.slotUrls = [null, null, null, null];
@@ -310,6 +318,237 @@ $('fillFromGallery').onclick = async () => {
   toast(`loaded ${Math.min(images.length, MAX_SLOTS)} from gallery`);
 };
 
+// ------------------------------------------------------------ upscale tab
+/** Which tab is on screen - the queue is shared, the forms are not. */
+function isTab(name) {
+  return document.querySelector('section.tab.active')?.id === `tab-${name}`;
+}
+
+function renderUpSlot() {
+  const wrap = $('upSlot');
+  wrap.innerHTML = '';
+  const d = document.createElement('div');
+  d.className = 'slot' + (state.upImage ? ' filled' : '');
+  if (state.upImage) {
+    const img = document.createElement('img');
+    img.src = state.upImageUrl;
+    img.alt = 'image to upscale';
+    d.append(img);
+    const x = document.createElement('button');
+    x.className = 'x';
+    x.type = 'button';
+    x.textContent = '×';
+    x.onclick = (ev) => { ev.stopPropagation(); setUpImage(null); };
+    d.append(x);
+  } else {
+    d.textContent = '+';
+    d.onclick = () => { $('upFilePick').value = ''; $('upFilePick').click(); };
+  }
+  wrap.append(d);
+  setHidden('upSlotNote', !state.upImage);
+  updateUpMath();
+}
+
+function setUpImage(value, url) {
+  state.upImage = value ?? null;
+  state.upImageUrl = value ? url : null;
+  renderUpSlot();
+}
+
+/** The gallery entry the upscale will load, as the value the server expects. */
+function useAsUpInput(entry) {
+  setUpImage({ ref: entry.id }, `/api/gallery/${entry.id}/file`);
+  toast(`${entry.localName || entry.comfyFilename || 'image'} ready to upscale`);
+}
+
+// The event helpers take the id and the handler only; anything but a click uses
+// addEventListener, which is safe on a missing element on its own.
+const listen = (id, type, fn) => $(id)?.addEventListener(type, fn);
+
+on('upClear', () => setUpImage(null));
+
+listen('upFilePick', 'change', async () => {
+  const file = $('upFilePick').files?.[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  try {
+    const { uploads } = await api('/api/uploads', { method: 'POST', body: fd });
+    if (!uploads.length) return;
+    setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+    toast('image ready to upscale');
+  } catch (e) {
+    toast(e.message);
+  }
+});
+
+// drag & drop straight onto the upscale slot
+$('upSlot').addEventListener('dragover', (e) => e.preventDefault());
+$('upSlot').addEventListener('drop', async (e) => {
+  e.preventDefault();
+  const file = [...(e.dataTransfer?.files ?? [])].find((f) => f.type.startsWith('image/'));
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  try {
+    const { uploads } = await api('/api/uploads', { method: 'POST', body: fd });
+    setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+  } catch (err) { toast(err.message); }
+});
+
+// A grid of recent images, because the usual case is "upscale the one I just
+// made" and picking a file from the phone's storage manager is much more work.
+on('upPickGallery', async () => {
+  try {
+    if (!state.galleryLoaded) await loadGallery();
+  } catch { /* loadGallery already told the user */ }
+  const list = $('pickList');
+  list.innerHTML = '';
+  const images = (state.gallery ?? []).slice(0, 36);
+  if (!images.length) {
+    const p = document.createElement('p');
+    p.className = 'note';
+    p.textContent = 'the gallery is empty';
+    list.append(p);
+  }
+  for (const entry of images) {
+    const b = document.createElement('button');
+    b.className = 'pickbtn';
+    b.type = 'button';
+    b.title = entry.localName || entry.comfyFilename || 'image';
+    const img = document.createElement('img');
+    img.src = `/api/gallery/${entry.id}/file`;
+    img.alt = b.title;
+    img.loading = 'lazy';
+    b.append(img);
+    b.onclick = () => {
+      useAsUpInput(entry);
+      closePickModal();
+    };
+    list.append(b);
+  }
+  setHidden('pickModal', false);
+});
+
+function closePickModal() {
+  setHidden('pickModal', true);
+  $('pickList').innerHTML = '';
+}
+on('pickCancel', closePickModal);
+
+// Pasting a screenshot works on whichever tab asks for it.
+window.addEventListener('paste', (e) => {
+  if (e.defaultPrevented) return;
+  const item = [...(e.clipboardData?.items ?? [])].find((i) => i.type.startsWith('image/'));
+  if (!item) return;
+  const file = item.getAsFile();
+  const fd = new FormData();
+  fd.append('file', file, 'pasted.png');
+  e.preventDefault();
+  api('/api/uploads', { method: 'POST', body: fd }).then(({ uploads }) => {
+    if (isTab('upscale')) {
+      setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+      toast('pasted image ready to upscale');
+      return;
+    }
+    const slot = state.slots.findIndex((s) => !s);
+    if (slot !== -1) setSlot(slot, { uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+    toast('pasted image attached');
+  }).catch((err) => toast(err.message));
+});
+
+/**
+ * The Size card's two states. With the switch off the target numbers are dead
+ * weight - the workflow never reads them - so they are disabled rather than
+ * quietly ignored.
+ */
+function syncUpUi() {
+  const toDim = $('upScaleToDim').checked;
+  for (const id of ['upTargetWidth', 'upTargetHeight']) setDisabled(id, !toDim);
+  setDisabled('upScale', toDim);
+  updateUpMath();
+}
+
+/** What the workflow will actually do, in one line under the inputs. */
+function updateUpMath() {
+  const scale = parseFloat($('upScale').value);
+  const w = parseInt($('upTargetWidth').value, 10);
+  const h = parseInt($('upTargetHeight').value, 10);
+  const toDim = $('upScaleToDim').checked;
+  const seedRaw = $('upSeed').value.trim();
+  const bits = [];
+  if (!state.upImage) bits.push('pick an image first');
+  if (toDim && Number.isFinite(w) && Number.isFinite(h)) {
+    // The graph multiplies BOTH sides by one factor k = min(4, sqrt(W*H/src)),
+    // so the result has the target's pixel count and the source's shape.
+    bits.push(`result fits inside ${w} × ${h}, same shape as the original, never more than 4×`);
+  } else if (Number.isFinite(scale) && scale > 0) {
+    bits.push(`each side ×${trimNum(scale)}`);
+  }
+  if (seedRaw) bits.push(`seed ${seedRaw} pinned`);
+  const out = [];
+  out.push(bits.join(' · ') || 'one image in, one image out');
+  if (toDim && Number.isFinite(w) && Number.isFinite(h)) {
+    out.push('A multiplier of ' + trimNum(scale) + ' is not used while the target size is on.');
+  }
+  setText('upMath', out.join(' '));
+}
+
+function trimNum(n) {
+  return String(Number(Number(n).toFixed(2)));
+}
+
+for (const id of ['upScale', 'upTargetWidth', 'upTargetHeight', 'upSeed']) {
+  $(id).addEventListener('input', updateUpMath);
+  $(id).addEventListener('change', updateUpMath);
+}
+$('upScaleToDim').addEventListener('change', syncUpUi);
+
+on('helpUpScale', (e) => {
+  e.preventDefault();
+  toast('each side of the image is multiplied by this - 2 means a 1000px image comes back at 2000px');
+});
+on('helpUpW', (e) => {
+  e.preventDefault();
+  toast('the workflow scales by ONE factor until the picture has this many pixels, so the shape never changes');
+});
+on('helpUpGuidance', (e) => {
+  e.preventDefault();
+  toast('appended after the workflow\'s own instruction - "keep it a pencil drawing", "no added detail" and so on');
+});
+on('helpUpSeed', (e) => {
+  e.preventDefault();
+  toast('blank picks a fresh seed - pin one to get the same upscale again');
+});
+
+on('upscale', async () => {
+  showError(null);
+  setDisabled('upscale', true);
+  const seedRaw = $('upSeed').value.trim();
+  try {
+    const job = await api('/api/upscale', {
+      method: 'POST',
+      body: JSON.stringify({
+        slots: state.upImage ? [state.upImage] : [],
+        scale: $('upScale').value === '' ? null : parseFloat($('upScale').value),
+        scaleToDim: $('upScaleToDim').checked,
+        targetWidth: $('upTargetWidth').value === '' ? null : parseInt($('upTargetWidth').value, 10),
+        targetHeight: $('upTargetHeight').value === '' ? null : parseInt($('upTargetHeight').value, 10),
+        guidance: $('upGuidance').value.trim(),
+        // The string goes up untouched so the server can refuse junk with a real
+        // message, instead of this page quietly rounding it into a number.
+        seed: seedRaw === '' ? null : seedRaw,
+        collectImages: $('upDownload').checked,
+      }),
+    });
+    trackJob(job);
+  } catch (e) {
+    if (!showBindingError(e)) showError(e.errors ? e.errors.join('\n') : e.message);
+  } finally {
+    setDisabled('upscale', false);
+  }
+});
+
 $('helpRefresh').onclick = (e) => {
   e.preventDefault();
   toast("'Once per group' throws the override switch on run 1 only, so the workflow enhances the prompt once and every later image varies by seed. 'Every run' re-enhances each time - slower, but each image gets its own wording.");
@@ -320,10 +559,37 @@ $('helpResolution').onclick = (e) => {
   toast('Pixel size fed to the Qwen text encoder (workflow node 204), not the final image size - that stays on Megapixels. Blank leaves the workflow at its own default of 1024. Raising it can help the encoder read fine detail in reference images; it costs VRAM and time.');
 };
 
+$('helpPostprompt').onclick = (e) => {
+  e.preventDefault();
+  toast('Joined onto your prompt by the workflow with no space between, AFTER the enhancer has run (node 257), so it reaches the model as part of the prompt and shows up in the saved prompt text. Blank leaves the workflow at its own value. Start it with a blank line if you want it on its own line.');
+};
+
 $('helpAspect').onclick = (e) => {
   e.preventDefault();
   toast('The prompt enhancer returns an aspect ratio of its own. Turn this on to use it - it needs Prompt enhance, because without the enhancer there is nothing to suggest. Turned off, the dropdown below is what node 9 uses.');
 };
+
+$('helpSeed').onclick = (e) => {
+  e.preventDefault();
+  toast('Blank = a fresh random seed for every run. Type a number to pin it: every run of that job then uses that exact seed, so the same prompt gives you the same image again. The History tab lists the seeds each prompt actually used, and copies them to the clipboard.');
+};
+
+// A pinned seed with more than one run means the same seed twice, so the runs
+// are only different images if the prompt itself changes (the enhancer
+// re-wording, or a different reference image). Say so instead of quietly
+// producing N copies of one picture.
+function syncSeedUi() {
+  const raw = $('seed').value.trim();
+  const note = $('seedNote');
+  const pinned = raw !== '';
+  const runs = Math.max(1, parseInt($('batch').value, 10) || 1) * Math.max(1, parseInt($('shuffle').value, 10) || 1);
+  note.hidden = !(pinned && runs > 1);
+  if (!note.hidden) {
+    note.textContent = `seed ${raw} is pinned - all ${runs} run(s) use it, so runs with the same prompt give the same image`;
+  }
+}
+$('seed').addEventListener('input', () => { syncSeedUi(); updateRunMath(); });
+$('seed').addEventListener('change', syncSeedUi);
 
 // The aspect dropdown only has meaning when the enhancer is NOT choosing.
 // Node 233 is forced off without the enhancer server-side too; hiding it here
@@ -352,6 +618,8 @@ function updateRunMath() {
     : $('aspectRatio').value.split(' ')[0];
   parts.push(shape);
   if ($('consistency').checked) parts.push('consistency LoRA');
+  const seedRaw = $('seed').value.trim();
+  if (seedRaw) parts.push(`seed ${seedRaw} pinned`);
   if (count) {
     parts.push(`${count} reference image(s) fed to the enhancer`);
   } else {
@@ -359,22 +627,43 @@ function updateRunMath() {
     // prompt, so the wording of every image depends on this, not just the seed.
     parts.push($('refresh').value === 'everyRun'
       ? 're-enhance the prompt every run'
-      : `${batch} seed(s) per group, prompt enhanced once`);
+      : seedRaw
+        // With a pinned seed there are no fresh seeds per group to talk about.
+        ? `prompt enhanced once per group, every run on seed ${seedRaw}`
+        : `${batch} seed(s) per group, prompt enhanced once`);
   }
   $('runMath').textContent = parts.join(' · ');
 }
-for (const id of ['batch', 'shuffle', 'refresh', 'aspectRatio', 'consistency']) $(id).addEventListener('input', updateRunMath);
-for (const id of ['batch', 'shuffle', 'refresh', 'aspectRatio', 'consistency']) $(id).addEventListener('change', updateRunMath);
+for (const id of ['batch', 'shuffle', 'refresh', 'aspectRatio', 'consistency', 'seed']) $(id).addEventListener('input', updateRunMath);
+for (const id of ['batch', 'shuffle', 'refresh', 'aspectRatio', 'consistency', 'seed']) $(id).addEventListener('change', updateRunMath);
+// The pinned-seed warning depends on how many runs the job will make, so it has
+// to follow Batch and Shuffle as well as the Seed box itself.
+for (const id of ['batch', 'shuffle']) {
+  $(id).addEventListener('input', syncSeedUi);
+  $(id).addEventListener('change', syncSeedUi);
+}
 
 // ---------------------------------------------------------- remembered form
 // Toggles and run settings survive a reload. The prompt itself does NOT - that
 // is what the History tab is for, and silently restoring a stale prompt would
 // be worse than an empty box. Reference images are not remembered either: the
-// uploads they point at are one-shot handles from a previous session.
+// uploads they point at are one-shot handles from a previous session. The SEED is
+// not remembered for the same reason as the prompt, one step harder: a pinned
+// seed that survived a reload would re-apply itself to the next, unrelated
+// prompt. History restores it, because tapping an entry means "run this again".
 const FORM_KEY = 'mcfy.form.v1';
 const FORM_IDS = [
   'enhance', 'turbo', 'consistency', 'collect', 'steps', 'inputResolution',
   'megapixels', 'batch', 'shuffle', 'refresh', 'useSuggestedAspect', 'aspectRatio',
+  // The postprompt is deliberately NOT remembered: it is text that belongs to one
+  // prompt, and a page reload is not a request to run an old idea again. History
+  // brings it back, because tapping an entry means "run this again".
+  //
+  // The upscale tab's settings live in the same stored form, and deliberately
+  // leave out the same things: the seed and the guidance belong to one image, and
+  // a pinned seed that survives a reload would quietly re-use itself on the next
+  // picture.
+  'upScale', 'upScaleToDim', 'upTargetWidth', 'upTargetHeight', 'upDownload',
 ];
 
 // The workflow's own combo values for node 9 "Resolution Selector". A COMBO
@@ -441,8 +730,13 @@ $('generate').onclick = async () => {
 
   const stepsRaw = $('steps').value.trim();
   const resRaw = $('inputResolution').value.trim();
+  const seedRaw = $('seed').value.trim();
   const body = {
     prompt,
+    // Sent verbatim, whitespace and leading newlines included: the workflow
+    // concatenates this onto the prompt with no delimiter, so the text the user
+    // typed is the text the model reads.
+    postprompt: $('postprompt').value,
     megapixels: parseFloat($('megapixels').value) || undefined,
     batch: parseInt($('batch').value, 10) || undefined,
     shuffle: parseInt($('shuffle').value, 10) || undefined,
@@ -452,6 +746,9 @@ $('generate').onclick = async () => {
     collectImages: $('collect').checked,
     stepsOverride: stepsRaw === '' ? null : parseInt(stepsRaw, 10),
     inputResolution: resRaw === '' ? null : parseInt(resRaw, 10),
+    // The string goes up untouched so the server can reject junk with a real
+    // message, instead of this page quietly rounding it into a number.
+    seed: seedRaw === '' ? null : seedRaw,
     useSuggestedAspect: $('useSuggestedAspect').checked,
     aspectRatio: $('aspectRatio').value,
     refresh: $('refresh').value,
@@ -462,20 +759,28 @@ $('generate').onclick = async () => {
     const job = await api('/api/generate', { method: 'POST', body: JSON.stringify(body) });
     trackJob(job);
     // Clear the prompt, never the settings - queueing four variations of the
-    // same idea should not mean retyping megapixels four times. References are
-    // the exception: they belong to the prompt that was just submitted, and
-    // leaving them armed would silently image-to-image the *next* one.
-    const hadRefs = state.slots.some(Boolean);
+    // same idea should not mean retyping megapixels four times. References and
+    // the postprompt are the exception: both belong to the prompt that was just
+    // submitted, and leaving them armed would silently change the *next* one.
+    const cleared = [];
     $('prompt').value = '';
     autoGrow($('prompt'));
-    if (hadRefs) clearSlots();
+    if ($('postprompt').value.trim() !== '') {
+      $('postprompt').value = '';
+      autoGrow($('postprompt'));
+      cleared.push('postprompt');
+    }
+    if (state.slots.some(Boolean)) {
+      clearSlots();
+      cleared.push('references');
+    }
     saveForm();
     // Let go of the prompt box. Refocusing it (or simply leaving it focused)
     // threw the on-screen keyboard straight back up over the queue and the job
     // that was just submitted, and this app is mostly used one-handed while
     // something is generating - the next prompt can wait for a scroll-up.
     if (document.activeElement === $('prompt')) $('prompt').blur();
-    if (hadRefs) toast('references cleared');
+    if (cleared.length) toast(`${cleared.join(' and ')} cleared`);
   } catch (e) {
     if (!showBindingError(e)) showError(e.errors ? e.errors.join('\n') : e.message);
   }
@@ -581,7 +886,10 @@ function renderQueue() {
       j.status === 'running' ? '▶' : finished ? '✓' : j.status === 'paused' ? '⏸' : '⏳';
     const text = document.createElement('span');
     text.className = 'qtext';
-    text.textContent = truncate(j.spec?.prompt ?? '(no prompt)', 42);
+    // One queue holds both kinds of work, so a row says which it is: an upscale
+    // has no prompt, and its label is built from the image and the scale.
+    text.textContent = (j.kind === 'upscale' || j.spec?.kind === 'upscale' ? '⤒ ' : '')
+      + truncate(j.spec?.prompt ?? '(no prompt)', 42);
     text.title = 'tap to show this job';
     text.onclick = () => { state.job = j; renderJob(j); renderQueue(); };
     const meta = document.createElement('span');
@@ -659,7 +967,9 @@ function renderQueue() {
       ? `paused — ComfyUI is not answering (${q.message || 'no connection'}). ${q.waiting ?? 0} job(s) held here; press resume when you are back on the network.`
       : `paused — ${q.waiting ?? 0} job(s) held here. Press resume to carry on.`;
   }
-  $('generate').textContent = busy.length ? 'Add to queue' : 'Generate';
+  // Both submit buttons offer the queue, because both share it.
+  setText('generate', busy.length ? 'Add to queue' : 'Generate');
+  setText('upscale', busy.length ? 'Add to queue' : 'Upscale');
 }
 
 on('queueToggle', async () => {
@@ -764,8 +1074,9 @@ setInterval(tickTimers, 1000);
 
 function renderJob(job) {
   $('jobPanel').hidden = false;
+  const upscale = job.kind === 'upscale' || job.spec?.kind === 'upscale';
   const s = $('jobStatus');
-  s.textContent = `${job.status} · ${job.summary.done}/${job.summary.total} runs · ${job.summary.images} images`;
+  s.textContent = `${upscale ? '⤒ upscale · ' : ''}${job.status} · ${job.summary.done}/${job.summary.total} runs · ${job.summary.images} images`;
   s.className = `status ${job.status}`;
 
   const cur = job.runs.find((r) => r.status === 'running') ?? job.runs[job.summary.current];
@@ -945,7 +1256,8 @@ function renderGallery() {
     head.setAttribute('aria-expanded', String(!collapsed));
     head.title = collapsed ? 'show images' : 'hide images';
     head.innerHTML =
-      `<span class="g-label"><b>${escapeHtml(truncate(entries[0].prompt ?? '(no prompt)', 70))}</b>`
+      `${entries[0].kind === 'upscale' ? '⤒ ' : ''}`
+      + `<span class="g-label"><b>${escapeHtml(truncate(entries[0].prompt ?? '(no prompt)', 70))}</b>`
       + `${escapeHtml(when)} · ${entries.length} image(s) · job ${escapeHtml(jobId.slice(0, 8))}</span>`;
     const chev = document.createElement('span');
     chev.className = 'g-chev';
@@ -969,6 +1281,9 @@ function renderGallery() {
       img.onclick = () => openLightbox(entry, state.gallery);
       const acts = document.createElement('div');
       acts.className = 'acts';
+      const bUp = document.createElement('button');
+      bUp.textContent = '⤒ upscale this';
+      bUp.onclick = () => { useAsUpInput(entry); showTab('upscale'); window.scrollTo(0, 0); };
       const bUse = document.createElement('button');
       bUse.textContent = '⟳ use as input';
       bUse.onclick = () => useAsInput(entry);
@@ -1061,7 +1376,7 @@ function renderHistory() {
     top.className = 'hrow-top';
     const p = document.createElement('div');
     p.className = 'hrow-prompt';
-    p.textContent = entry.prompt || '(empty prompt)';
+    p.textContent = (entry.kind ?? entry.settings?.kind) === 'upscale' ? `⤒ ${entry.prompt || '(upscale)'}` : (entry.prompt || '(empty prompt)');
     const x = document.createElement('button');
     x.className = 'hrow-x';
     x.type = 'button';
@@ -1078,6 +1393,7 @@ function renderHistory() {
     card.append(top);
 
     const s = entry.settings ?? {};
+    const isUpscale = (entry.kind ?? s.kind) === 'upscale';
     const meta = document.createElement('div');
     meta.className = 'hrow-meta';
     const when = new Date(entry.lastUsedAt).toLocaleString();
@@ -1085,9 +1401,23 @@ function renderHistory() {
     if (entry.uses > 1) bits.push(`used ${entry.uses}×`);
     if (entry.results) bits.push(`${entry.results} image${entry.results > 1 ? 's' : ''}`);
     const refs = (entry.slots ?? []).filter(Boolean).length;
-    if (refs) bits.push(`${refs} reference${refs > 1 ? 's' : ''}`);
+    // An upscale's one image is its input, not a reference, and saying
+    // "1 reference" for it would be wrong.
+    if (refs && !isUpscale) bits.push(`${refs} reference${refs > 1 ? 's' : ''}`);
     meta.textContent = bits.join(' · ');
     card.append(meta);
+
+    // The row's buttons. Every one of them stops the click, because the row
+    // itself restores the prompt when tapped.
+    const mkBtn = (label, title, fn, extraClass) => {
+      const b = document.createElement('button');
+      b.className = extraClass ? `mini ${extraClass}` : 'mini';
+      b.type = 'button';
+      b.textContent = label;
+      b.title = title;
+      b.onclick = (ev) => { ev.stopPropagation(); fn(); };
+      return b;
+    };
 
     const chips = document.createElement('div');
     chips.className = 'chips';
@@ -1097,12 +1427,25 @@ function renderHistory() {
       c.textContent = label;
       chips.append(c);
     };
+    if (isUpscale) {
+      // The upscale graph has none of the generate settings, so the row is read
+      // from the ones it does have instead of printing a column of meaningless
+      // "enhance on / turbo / megapixels" chips.
+      chip('upscale', true);
+      chip(s.scaleToDim ? `target ${s.targetWidth} × ${s.targetHeight}` : `×${trimNum(s.scale ?? 1)}`, true);
+      if (s.guidance) chip('extra guidance', false);
+      if (s.collectImages === false) chip('no downloads', false);
+      if (s.seed !== null && s.seed !== undefined) chip(`seed pinned: ${s.seed}`, true);
+    } else {
     chip(`enhance ${s.promptEnhance === false ? 'off' : 'on'}`, s.promptEnhance !== false);
     chip(s.turbo ? 'turbo' : 'full model', s.turbo);
     if (s.consistency) chip('consistency LoRA', true);
     if (s.stepsOverride) chip(`${s.stepsOverride} steps`, true);
     if (s.inputResolution) chip(`${s.inputResolution}px encoder`, true);
     chip(fmtMP(s.megapixels), false);
+    // The postprompt is already inside every captured prompt, so this chip is
+    // only a reminder that the row's wording has a tail of its own.
+    if (typeof s.postprompt === 'string' && s.postprompt.trim() !== '') chip('+ postprompt', true);
     chip(
       s.useSuggestedAspect ? 'aspect: suggested' : `aspect: ${(s.aspectRatio ?? '1:1 (Square)').split(' ')[0]}`,
       s.useSuggestedAspect === true,
@@ -1110,7 +1453,52 @@ function renderHistory() {
     chip(`${s.batch ?? 1}×${s.shuffle ?? 1} shuffle`, false);
     if (s.refresh === 'everyRun') chip('refresh every run', true);
     if (s.collectImages === false) chip('no downloads', false);
+    if (s.seed !== null && s.seed !== undefined) chip(`seed pinned: ${s.seed}`, true);
+    }
     card.append(chips);
+
+    // --- the seeds -----------------------------------------------------------
+    // The seeds are the other half of the recipe: same prompt + same seed gives
+    // the same image, so this is what makes a result repeatable. They only exist
+    // once a run has actually been sent to ComfyUI, so a prompt that is still
+    // queued has none yet.
+    const seeds = (entry.seeds ?? []).filter((n) => Number.isFinite(n));
+    if (seeds.length) {
+      const box = document.createElement('div');
+      box.className = 'hrow-seedbox';
+
+      const bar = document.createElement('div');
+      bar.className = 'hrow-seedbar';
+
+      const label = document.createElement('span');
+      label.className = 'hrow-seedlabel';
+      label.textContent = seeds.length === 1 ? `seed ${seeds[0]}` : `${seeds.length} seeds`;
+      label.title = seeds.length === 1
+        ? 'the seed this image was made with'
+        : 'one seed per run, in the order the runs went out';
+      bar.append(label);
+
+      const spacer = document.createElement('span');
+      spacer.className = 'flex1';
+      bar.append(spacer);
+
+      // Newline separated: pasting into a text box gives one number per line,
+      // which is what you want when you are moving seeds between prompts.
+      const seedText = seeds.join('\n');
+      bar.append(
+        mkBtn('copy', 'copy the seeds, one per line', async () => {
+          toast(await copyText(seedText)
+            ? `${seeds.length} seed${seeds.length > 1 ? 's' : ''} copied`
+            : 'copy blocked by the browser');
+        }),
+        mkBtn(seeds.length > 1 ? 'use first' : 'use', 'put this seed in the Seed box', () => {
+          useSeed(seeds[0], isUpscale ? 'upscale' : 'generate');
+        }),
+      );
+
+      box.append(bar);
+      card.append(box);
+    }
 
     const imgs = (entry.slots ?? []).filter(Boolean);
     if (imgs.length) {
@@ -1163,16 +1551,6 @@ function renderHistory() {
       const spacer = document.createElement('span');
       spacer.className = 'flex1';
       bar.append(spacer);
-
-      const mkBtn = (label, title, fn, extraClass) => {
-        const b = document.createElement('button');
-        b.className = extraClass ? `mini ${extraClass}` : 'mini';
-        b.type = 'button';
-        b.textContent = label;
-        b.title = title;
-        b.onclick = (ev) => { ev.stopPropagation(); fn(); };
-        return b;
-      };
 
       // One collapsible per capture, nested inside this one.
       const list = document.createElement('div');
@@ -1264,13 +1642,46 @@ function useEnhancedAsPrompt(text) {
 }
 
 /**
+ * Put a remembered seed into the Seed box and go to the Generate tab.
+ *
+ * This is the "run that one again" shortcut: the seed is filled in so the next
+ * press reuses it, and the field itself stays visible and editable, so nothing
+ * about the job is hidden by putting a seed back.
+ */
+function useSeed(seed, kind = 'generate') {
+  if (!Number.isFinite(seed)) return;
+  if (kind === 'upscale') {
+    $('upSeed').value = String(seed);
+    updateUpMath();
+    showTab('upscale');
+    window.scrollTo(0, 0);
+    toast(`seed ${seed} loaded`);
+    return;
+  }
+  $('seed').value = String(seed);
+  syncSeedUi();
+  updateRunMath();
+  showTab('generate');
+  window.scrollTo(0, 0);
+  toast(`seed ${seed} loaded`);
+}
+
+/**
  * Put a remembered prompt back on the Generate tab: text, every setting, and
  * the reference images. Reference images that were pruned from disk are
  * reported rather than dropped silently.
+ *
+ * An upscale row goes to the Upscale tab instead. The two forms have nothing in
+ * common, and putting a scale factor into the megapixels box because the row
+ * happened to be an upscale would be worse than doing nothing.
  */
 function restoreHistory(entry) {
   const s = entry.settings ?? {};
+  if ((entry.kind ?? s.kind) === 'upscale') return restoreUpscaleHistory(entry);
   $('prompt').value = entry.prompt ?? '';
+  // Older rows have no postprompt at all, so an absent field clears the box
+  // instead of leaving whatever was typed there armed on the next run.
+  $('postprompt').value = typeof s.postprompt === 'string' ? s.postprompt : '';
   if (s.megapixels) $('megapixels').value = s.megapixels;
   if (s.batch) $('batch').value = s.batch;
   if (s.shuffle) $('shuffle').value = s.shuffle;
@@ -1283,8 +1694,13 @@ function restoreHistory(entry) {
   $('consistency').checked = s.consistency === true;
   $('useSuggestedAspect').checked = s.useSuggestedAspect === true && s.promptEnhance !== false;
   if (ASPECT_RATIOS.includes(s.aspectRatio)) $('aspectRatio').value = s.aspectRatio;
+  // A pinned seed comes back with the prompt, because that is what made it
+  // reproducible - but only when the row actually pinned one, so an old row
+  // cannot silently re-pin a seed the user has moved on from.
+  $('seed').value = s.seed === null || s.seed === undefined ? '' : String(s.seed);
   syncAspectUi();
   syncEnhanceHint();
+  syncSeedUi();
 
   let restored = 0;
   let lost = 0;
@@ -1307,6 +1723,39 @@ function restoreHistory(entry) {
   window.scrollTo(0, 0);
   updateRunMath();
   toast(lost ? `loaded - ${lost} reference image(s) are gone` : 'loaded into Generate');
+}
+
+/**
+ * The same gesture on an upscale row: the settings come back into the Upscale
+ * form and the image is re-attached when it is still on disk. Nothing is
+ * submitted - tapping history has always meant "fill the form in".
+ */
+function restoreUpscaleHistory(entry) {
+  const s = entry.settings ?? {};
+  $('upScale').value = s.scale ?? '';
+  $('upScaleToDim').checked = s.scaleToDim === true;
+  $('upTargetWidth').value = s.targetWidth ?? '';
+  $('upTargetHeight').value = s.targetHeight ?? '';
+  $('upGuidance').value = s.guidance ?? '';
+  $('upSeed').value = s.seed === null || s.seed === undefined ? '' : String(s.seed);
+  $('upDownload').checked = s.collectImages !== false;
+
+  const slot = (entry.slots ?? []).find(Boolean);
+  let lost = false;
+  if (slot?.available && slot.url) {
+    setUpImage(slot.kind === 'upload' ? { uploadId: slot.uploadId } : { ref: slot.ref }, slot.url);
+  } else {
+    lost = true;
+    setUpImage(null);
+  }
+  syncUpUi();
+  updateUpMath();
+  saveForm();
+  showError(null);
+  showTab('upscale');
+  autoGrow($('upGuidance'));
+  window.scrollTo(0, 0);
+  toast(lost ? 'loaded - the image is gone, pick another' : 'loaded into Upscale');
 }
 
 $('reloadHistory').onclick = loadHistory;
@@ -1363,6 +1812,22 @@ function resetZoom() {
   lbZoom.x = 0;
   lbZoom.y = 0;
   applyZoom();
+}
+
+/**
+ * Zoom by `factor` while holding the content point under `focal` (client
+ * coords) still. A pinch uses the finger midpoint here, so the image grows
+ * towards the fingers instead of towards its own centre; pass the image
+ * centre to zoom the way the +/- buttons and the double tap do.
+ */
+function zoomAbout(factor, focal) {
+  const next = clamp(lbZoom.s * factor, LB_MIN, LB_MAX);
+  const rect = lbImg.getBoundingClientRect();
+  // The centre of the transformed image, so the focal offset is in screen px.
+  const cx = focal.x - (rect.left + rect.width / 2);
+  const cy = focal.y - (rect.top + rect.height / 2);
+  const pan = zoomAboutPoint(lbZoom, cx, cy, next);
+  setZoom(next, pan.x, pan.y);
 }
 
 // --- back button ----------------------------------------------------------
@@ -1435,7 +1900,14 @@ on('lbReset', resetZoom);
 on('lbUse', () => {
   useAsInput(lbEntry);
   closeLightbox();
-  document.querySelector('.tabbtn[data-tab="generate"]').click();
+  showTab('generate');
+});
+// The lightbox is where a generated image gets judged, so "upscale this" has to
+// be one tap from there rather than a trip through the gallery.
+on('lbUpscale', () => {
+  useAsUpInput(lbEntry);
+  closeLightbox();
+  showTab('upscale');
 });
 
 document.addEventListener('keydown', (e) => {
@@ -1450,10 +1922,12 @@ document.addEventListener('keydown', (e) => {
 
 // --- pinch / drag / wheel ------------------------------------------------
 // Pointer events cover touch, mouse and stylus in one path. Two live pointers
-// means a pinch (scale by the ratio of finger distances, pan by the midpoint
-// delta); one means a drag.
+// means a pinch (scale by the ratio of finger distances, around the midpoint
+// between them); one means a drag.
 const lbImg = $('lightboxImg');
 const pointers = new Map();
+// `d` is the distance the previous pinch was at; the midpoint is kept for
+// reference only, because the focal point is read live off the current one.
 let pinch = null;   // { d, x, y } midpoint+distance from the previous move
 let drag = null;    // { x, y } last position of the single tracked pointer
 let swipe = null;   // { x, y, t } where a swipe would start, for step-on-swipe
@@ -1500,7 +1974,11 @@ lbImg.addEventListener('pointermove', (e) => {
     const d = dist(a, b);
     const m = mid(a, b);
     if (pinch && pinch.d > 0 && d > 0) {
-      setZoom(lbZoom.s * (d / pinch.d), lbZoom.x + (m.x - pinch.x), lbZoom.y + (m.y - pinch.y));
+      // Zoom towards the midpoint between the fingers, not the image centre:
+      // the point the user is looking at is the one that must stay put. The
+      // two-finger midpoint drift is already folded into that focal point, so
+      // panning comes out of the same call.
+      zoomAbout(d / pinch.d, m);
     }
     pinch = { d, ...m };
   } else if (drag) {
@@ -1545,17 +2023,21 @@ lbImg.addEventListener('dblclick', (e) => e.preventDefault());
 
 lbImg.addEventListener('wheel', (e) => {
   e.preventDefault();
-  const rect = lbImg.getBoundingClientRect();
-  // The centre of the transformed image, so the cursor offset is in screen px.
-  const cx = e.clientX - (rect.left + rect.width / 2);
-  const cy = e.clientY - (rect.top + rect.height / 2);
-  const next = clamp(lbZoom.s * (e.deltaY < 0 ? 1.15 : 1 / 1.15), LB_MIN, LB_MAX);
-  const k = next / lbZoom.s;
-  // Hold the point under the cursor still: x' = x + (x - cursorOffset) * (k - 1).
-  setZoom(next, lbZoom.x + (lbZoom.x - cx) * (k - 1), lbZoom.y + (lbZoom.y - cy) * (k - 1));
+  zoomAbout(e.deltaY < 0 ? 1.15 : 1 / 1.15, { x: e.clientX, y: e.clientY });
 }, { passive: false });
 
 // ---------------------------------------------------------------- settings
+/**
+ * Which graph the bindings editor is looking at. Generate and Upscale read two
+ * different files whose node ids share nothing, so one editor with a switch is
+ * the only way to keep them from being confused - and the check/save/reset calls
+ * all have to carry the same answer, or the page would validate the generate
+ * bindings while showing the upscale ones.
+ */
+const bindKind = () => $('bindKind')?.value === 'upscale' ? 'upscale' : 'generate';
+const bindingsFor = (kind) => (kind === 'upscale' ? state.cfg?.upscaleBindings : state.cfg?.bindings) ?? {};
+const bindingsPath = (kind) => (kind === 'upscale' ? '/api/upscale/workflow' : '/api/workflow');
+
 async function loadSettings() {
   try {
     const body = await api('/api/config');
@@ -1567,7 +2049,7 @@ async function loadSettings() {
     $('cfgNodes').value = (body.config.collectNodes ?? []).join(', ');
     $('cfgTextNodes').value = (body.config.promptTextNodes ?? []).join(', ');
     $('envNote').textContent = `token file: ${body.envFile}`;
-    renderBindings(body.config.bindings ?? {});
+    renderBindings(bindingsFor(bindKind()));
   } catch (e) { toast(e.message); }
 }
 
@@ -1588,6 +2070,14 @@ const BIND_LABELS = {
   inputResolution: 'Encoder resolution',
   enhanceSeed: 'Enhancer seed',
   images: 'Reference images',
+  // The upscale graph's own rows.
+  image: 'Image to upscale',
+  scale: 'Scale multiplier',
+  scaleToDim: 'Scale to a size',
+  scaleToDimHeight: 'Scale to a size (height)',
+  targetWidth: 'Target width',
+  targetHeight: 'Target height',
+  guidance: 'Guidance prompt',
 };
 
 function renderBindings(bindings) {
@@ -1661,14 +2151,18 @@ function collectBindings() {
  * truth about what the next run will actually do.
  */
 $('saveBindings').onclick = async () => {
+  const kind = bindKind();
   const msg = $('bindMsg');
   msg.textContent = 'saving…';
   msg.classList.remove('bad');
   try {
-    const body = await api('/api/config', { method: 'PUT', body: JSON.stringify({ bindings: collectBindings() }) });
+    const patch = kind === 'upscale'
+      ? { upscaleBindings: collectBindings() }
+      : { bindings: collectBindings() };
+    const body = await api('/api/config', { method: 'PUT', body: JSON.stringify(patch) });
     state.cfg = body.config;
-    renderBindings(body.config.bindings ?? {});
-    const dropped = body.staleBindings ?? [];
+    renderBindings(bindingsFor(kind));
+    const dropped = kind === 'upscale' ? (body.staleUpscaleBindings ?? []) : (body.staleBindings ?? []);
     await checkBindings();
     if (dropped.length) {
       msg.textContent = `saved, but ignored unknown setting(s): ${dropped.join(', ')}`;
@@ -1677,6 +2171,19 @@ $('saveBindings').onclick = async () => {
     }
   } catch (e) { msg.textContent = e.message; }
 };
+
+/**
+ * Switching graph swaps the rows to the other map and re-checks them. Nothing is
+ * sent by doing this - the rows only reach the server when Save is pressed - and
+ * an edit left half-typed on the previous graph is simply dropped, which is why
+ * the message line is cleared rather than left claiming something about the map
+ * that is no longer on screen.
+ */
+listen('bindKind', 'change', () => {
+  renderBindings(bindingsFor(bindKind()));
+  setText('bindMsg', '');
+  checkBindings();
+});
 
 $('checkBindings').onclick = checkBindings;
 
@@ -1689,16 +2196,20 @@ $('checkBindings').onclick = checkBindings;
  * able to say "forget what I typed".
  */
 $('resetBindings').onclick = async () => {
+  const kind = bindKind();
   const msg = $('bindMsg');
-  if (!confirm('Reset every node binding back to this build\'s defaults?\n\nSettings you changed here will be lost.')) return;
+  if (!confirm(`Reset every ${kind} node binding back to this build's defaults?\n\nSettings you changed here will be lost.`)) return;
   msg.textContent = 'resetting…';
   msg.classList.remove('bad');
   try {
-    const body = await api('/api/config/bindings/reset', { method: 'POST' });
+    const body = await api('/api/config/bindings/reset', {
+      method: 'POST',
+      body: JSON.stringify({ kind }),
+    });
     state.cfg = body.config;
     state.bindingTitles = new Map();
     for (const r of body.bindings ?? []) state.bindingTitles.set(`${r.binding}${r.slot ?? ''}`, r);
-    renderBindings(body.config.bindings ?? {});
+    renderBindings(bindingsFor(kind));
     paintBindingMarks(body.bindings ?? []);
     const bad = (body.bindings ?? []).filter((r) => !r.ok);
     if (bad.length) {
@@ -1723,10 +2234,14 @@ function showBindingError(err) {
 }
 
 async function checkBindings() {
+  const kind = bindKind();
   const msg = $('bindMsg');
   msg.textContent = 'checking…';
   try {
-    const { bindings, ok } = await api('/api/config/validate', { method: 'POST' });
+    const { bindings, ok } = await api('/api/config/validate', {
+      method: 'POST',
+      body: JSON.stringify({ kind }),
+    });
     // The whole record is kept, not just the title: renderBindings re-reads this
     // map, and a map that cannot say "this one failed" is how a broken row ends
     // up wearing a tick.
@@ -1737,7 +2252,9 @@ async function checkBindings() {
       if (!r.ok) bad++;
     }
     paintBindingMarks(bindings);
-    msg.textContent = ok ? 'all bindings ok' : `${bad} problem(s) - the Generate button will refuse to run`;
+    msg.textContent = ok
+      ? `all ${kind} bindings ok`
+      : `${bad} problem(s) - the ${kind === 'upscale' ? 'Upscale' : 'Generate'} button will refuse to run`;
     msg.classList.toggle('bad', !ok);
   } catch (e) { msg.textContent = e.message; }
 }
@@ -1994,17 +2511,39 @@ on('shAgain', () => {
   watchForShutdown();
 });
 
-$('wfUpload').onchange = async () => {
-  const file = $('wfUpload').files[0];
+/** One handler for both graph files; `kind` says which file to write. */
+async function uploadWorkflow(kind, inputId) {
+  const file = $(inputId).files?.[0];
   if (!file) return;
   try {
     const workflow = JSON.parse(await file.text());
-    const r = await api('/api/workflow', { method: 'PUT', body: JSON.stringify({ workflow }) });
-    $('wfMsg').textContent = `saved ${r.nodes} nodes`;
-    renderNodeList(workflow);
-    await checkBindings();
+    const r = await api(bindingsPath(kind), { method: 'PUT', body: JSON.stringify({ workflow }) });
+    $('wfMsg').textContent = `saved ${r.nodes} nodes to ${kind === 'upscale' ? 'upscale_api.json' : 'workflow_api.json'}`;
+    if (kind === bindKind()) {
+      nodeListKind = kind;
+      renderNodeList(workflow);
+      await checkBindings();
+    } else {
+      toast('saved - switch the bindings to "for" above to check them');
+    }
   } catch (e) { $('wfMsg').textContent = e.message; }
-};
+}
+
+listen('wfUpload', 'change', () => uploadWorkflow('generate', 'wfUpload'));
+listen('upWfUpload', 'change', () => uploadWorkflow('upscale', 'upWfUpload'));
+
+// The node reference follows the graph the bindings editor is on, and is only
+// fetched when it is actually opened - the upscale graph has 40-odd nodes and
+// nobody needs them downloaded on every settings visit.
+let nodeListKind = null;
+listen('nodeListWrap', 'toggle', async () => {
+  if (!$('nodeListWrap').open || nodeListKind === bindKind()) return;
+  try {
+    const { workflow } = await api(bindingsPath(bindKind()));
+    nodeListKind = bindKind();
+    renderNodeList(workflow);
+  } catch (e) { toast(e.message); }
+});
 
 function renderNodeList(wf) {
   const ul = $('nodeList');
@@ -2033,10 +2572,13 @@ loadCollapsed();
 // HTML defaults and then jumps to what the user actually left set.
 const hadSavedForm = restoreForm();
 renderSlots();
+renderUpSlot();
+syncUpUi();
 syncAspectUi();
 syncEnhanceHint();
 updateRunMath();
 autoGrow($('prompt'));
+autoGrow($('postprompt'));
 renderQueue();
 refreshHealth();
 connectEvents();

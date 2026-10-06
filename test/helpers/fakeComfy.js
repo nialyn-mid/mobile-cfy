@@ -50,24 +50,31 @@ export const dropRoot = (root) => fs.rmSync(root, { recursive: true, force: true
  * which a run has a prompt id and NO start time, so it is the state a timer has
  * to be right about. `startAll()` (or `start(id)`) moves it to `queue_running`.
  */
-export function startFakeComfyUI({ mode = 'instant', holdStart = false } = {}) {
+export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode = 8, textNode = 181 } = {}) {
   const state = {
     mode,
     holdStart,
+    saveNode,
+    textNode,
     prompts: [],
     deleted: [],
     next: 0,
     pending: new Map(),
     running: new Set(),
     history: new Map(),
+    uploads: [],
     stall: null,
   };
 
   const entryFor = (n, prompt) => ({
     status: { status_str: 'success', completed: true },
     outputs: {
-      8: { images: [{ filename: `ComfyUI_${String(n).padStart(5, '0')}_.png`, subfolder: '', type: 'output' }] },
-      181: { text: [`enhanced: ${String(prompt).slice(0, 40)}`] },
+      // The graph under test decides which node saves; the generate workflow
+      // uses 8 and 181, the upscale workflow saves from 508 and has no text node.
+      [saveNode]: {
+        images: [{ filename: `ComfyUI_${String(n).padStart(5, '0')}_.png`, subfolder: '', type: 'output' }],
+      },
+      ...(textNode === null ? {} : { [textNode]: { text: [`enhanced: ${String(prompt).slice(0, 40)}`] } }),
     },
   });
 
@@ -127,6 +134,21 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false } = {}) {
       send(200, {
         queue_running: [...state.pending.keys()].filter((id) => state.running.has(id)).map((id) => [1, id, {}, {}, []]),
         queue_pending: [...state.pending.keys()].filter((id) => !state.running.has(id)).map((id) => [1, id, {}, {}, []]),
+      });
+      return;
+    }
+
+    if (req.method === 'POST' && url.pathname === '/upload/image') {
+      // The fake does not keep an input directory - it only has to say the way
+      // ComfyUI does, because LoadImage is handed this name back and the runner
+      // writes it into the workflow. The multipart body is drained, not parsed.
+      const chunks = [];
+      req.on('data', (c) => chunks.push(c));
+      req.on('end', () => {
+        const raw = Buffer.concat(chunks).toString('latin1');
+        const name = /filename="([^"]+)"/.exec(raw)?.[1] ?? 'upload.png';
+        state.uploads.push(name);
+        send(200, { name, subfolder: '', type: 'input' });
       });
       return;
     }

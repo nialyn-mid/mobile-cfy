@@ -1,6 +1,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   init,
   config,
@@ -28,6 +29,13 @@ const ROOT = process.env.MOBILE_CFY_ROOT || process.cwd();
 init(ROOT);
 const P = paths();
 for (const dir of [P.dataDir, P.uploads]) ensureDir(dir);
+
+// Where the code lives, which is NOT where the data lives. ROOT is configurable
+// so the workflows, history and downloads can be kept elsewhere; the web page is
+// part of the app itself, so it is served from next to server.js and not from the
+// data root - otherwise pointing MOBILE_CFY_ROOT anywhere but the checkout turned
+// the whole UI into a 404.
+const APP_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -90,7 +98,7 @@ function serveFile(req, res, file, { download = false } = {}) {
 
 function serveStatic(req, res, urlPath) {
   const rel = urlPath === '/' ? '/index.html' : urlPath;
-  const pubRoot = path.join(P.root, 'public');
+  const pubRoot = path.join(APP_DIR, 'public');
   const target = path.join(pubRoot, path.normalize(rel).replace(/^([/\\])+/, ''));
   if (!target.startsWith(pubRoot)) return json(res, 403, { error: 'forbidden' });
   fs.readFile(target, (err, data) => {
@@ -211,6 +219,7 @@ route('GET', '/api/config', async (req, res) => {
     envFile: envFilePath(),
     resolved: {
       workflow: P.workflow,
+      upscaleWorkflow: P.upscaleWorkflow,
       downloadDir: P.downloadDir,
       dataDir: P.dataDir,
     },
@@ -227,7 +236,11 @@ route('PUT', '/api/config', async (req, res) => {
     // mergeConfig). Report them so the UI can say so instead of showing a
     // cheerful "saved" next to a binding that never took effect.
     staleBindings: saved.staleBindings ?? [],
-    resolved: { downloadDir: paths().downloadDir, workflow: paths().workflow },
+    resolved: {
+      downloadDir: paths().downloadDir,
+      workflow: paths().workflow,
+      upscaleWorkflow: paths().upscaleWorkflow,
+    },
   });
 });
 
@@ -238,20 +251,34 @@ route('POST', '/api/config/bindings/reset', async (req, res) => {
   // hand (node id changed, input name left behind) stays broken on purpose and
   // needs a way back. This is that way back, and it reports what it restored so a
   // workflow the server cannot read is visible immediately rather than after the
-  // next run fails.
-  const saved = saveConfig({ bindings: structuredClone(DEFAULTS.bindings) });
-  const bindings = validateBindings(saved.bindings);
+  // next run fails. `kind` picks which map: the two point at different files.
+  const body = await readJson(req);
+  const upscale = body?.kind === 'upscale';
+  const saved = saveConfig(
+    upscale
+      ? { upscaleBindings: structuredClone(DEFAULTS.upscaleBindings) }
+      : { bindings: structuredClone(DEFAULTS.bindings) },
+  );
+  const bindings = upscale
+    ? validateBindings(saved.upscaleBindings, P.upscaleWorkflow)
+    : validateBindings(saved.bindings);
   json(res, 200, {
     config: saved,
+    kind: upscale ? 'upscale' : 'generate',
     bindings,
     ok: bindings.every((b) => b.ok),
     staleBindings: saved.staleBindings ?? [],
+    staleUpscaleBindings: saved.staleUpscaleBindings ?? [],
   });
 });
 
 route('POST', '/api/config/validate', async (req, res) => {
-  const bindings = validateBindings(state.config.bindings);
-  json(res, 200, { bindings, ok: bindings.every((b) => b.ok) });
+  const body = await readJson(req);
+  const upscale = body?.kind === 'upscale';
+  const bindings = upscale
+    ? validateBindings(state.config.upscaleBindings, P.upscaleWorkflow)
+    : validateBindings(state.config.bindings);
+  json(res, 200, { kind: upscale ? 'upscale' : 'generate', bindings, ok: bindings.every((b) => b.ok) });
 });
 
 route('POST', '/api/paths/check', async (req, res) => {
@@ -270,26 +297,39 @@ route('POST', '/api/paths/check', async (req, res) => {
   json(res, 200, { dir: target, exists, writable, isSharedStorage: /storage[\\/]downloads/i.test(target) });
 });
 
-route('GET', '/api/workflow', async (req, res) => {
-  try {
-    const wf = JSON.parse(fs.readFileSync(P.workflow, 'utf8'));
-    json(res, 200, { workflow: wf, path: P.workflow });
-  } catch (e) {
-    json(res, 500, { error: `cannot read ${P.workflow}: ${e.message}` });
-  }
-});
+// Both workflows can be read and replaced from Settings. Same handler twice,
+// different file: the route table needs them apart, the code does not.
+function readWorkflowRoute(file) {
+  return async (req, res) => {
+    try {
+      const wf = JSON.parse(fs.readFileSync(file, 'utf8'));
+      json(res, 200, { workflow: wf, path: file });
+    } catch (e) {
+      json(res, 500, { error: `cannot read ${file}: ${e.message}` });
+    }
+  };
+}
 
-route('PUT', '/api/workflow', async (req, res) => {
-  const body = await readJson(req);
-  const wf = body.workflow ?? body;
-  if (!wf || typeof wf !== 'object' || Array.isArray(wf)) {
-    return json(res, 400, { error: 'workflow must be a JSON object of nodeId -> node' });
-  }
-  const tmp = `${P.workflow}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(wf, null, 2), 'utf8');
-  fs.renameSync(tmp, P.workflow);
-  json(res, 200, { saved: true, nodes: Object.keys(wf).length });
-});
+function writeWorkflowRoute(file) {
+  return async (req, res) => {
+    const body = await readJson(req);
+    const wf = body.workflow ?? body;
+    if (!wf || typeof wf !== 'object' || Array.isArray(wf)) {
+      return json(res, 400, { error: 'workflow must be a JSON object of nodeId -> node' });
+    }
+    // Written to a temp file and renamed, so a failure halfway through cannot
+    // leave a half-written graph that every later run reads as missing nodes.
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(wf, null, 2), 'utf8');
+    fs.renameSync(tmp, file);
+    json(res, 200, { saved: true, nodes: Object.keys(wf).length });
+  };
+}
+
+route('GET', '/api/workflow', readWorkflowRoute(paths().workflow));
+route('PUT', '/api/workflow', writeWorkflowRoute(paths().workflow));
+route('GET', '/api/upscale/workflow', readWorkflowRoute(paths().upscaleWorkflow));
+route('PUT', '/api/upscale/workflow', writeWorkflowRoute(paths().upscaleWorkflow));
 
 route('POST', '/api/uploads', async (req, res) => {
   const buf = await readBody(req);
@@ -317,24 +357,45 @@ route('GET', '/api/uploads/:id', async (req, res, url, { id }) => {
 
 route('GET', '/api/uploads', async (req, res) => json(res, 200, { uploads: listUploads() }));
 
+/**
+ * Refuse a job whose bindings point at nodes the workflow no longer has.
+ *
+ * Without this the job is accepted, sits in the queue, and every run fails the
+ * same cryptic "node 43 is not in the workflow" - which is how a stale node id
+ * saved in Settings can go unnoticed for days. Failing here names the setting.
+ */
+function bindingGuard(bindings, workflowFile) {
+  const broken = validateBindings(bindings, workflowFile).filter((b) => !b.ok);
+  if (!broken.length) return;
+  const err = new Error(
+    `binding problem - fix it in Settings: ${broken
+      .map((b) => `${b.binding}${b.slot ? ` #${b.slot}` : ''}: ${b.reason}`)
+      .join('; ')}`,
+  );
+  err.status = 400;
+  err.errors = broken.map((b) => b.reason);
+  err.bindings = broken;
+  throw err;
+}
+
 route('POST', '/api/generate', async (req, res) => {
-  // Refuse up front if a binding points at a node the workflow no longer has.
-  // Without this the job is accepted, sits in the queue, and every run fails the
-  // same cryptic "node 43 is not in the workflow" - which is how a stale node id
-  // saved in Settings can go unnoticed for days. Failing here names the setting.
-  const broken = validateBindings(state.config.bindings).filter((b) => !b.ok);
-  if (broken.length) {
-    const err = new Error(
-      `binding problem - fix it in Settings: ${broken
-        .map((b) => `${b.binding}${b.slot ? ` #${b.slot}` : ''}: ${b.reason}`)
-        .join('; ')}`,
-    );
-    err.status = 400;
-    err.errors = broken.map((b) => b.reason);
-    err.bindings = broken;
-    throw err;
-  }
-  const job = runner.enqueue(await readJson(req));
+  bindingGuard(state.config.bindings);
+  // The kind is stamped here, not read from the body: this route runs the
+  // generate graph and checks the generate bindings, so a body claiming to be an
+  // upscale would otherwise slip past both.
+  const job = runner.enqueue({ ...(await readJson(req)), kind: 'generate' });
+  json(res, 202, job);
+});
+
+// The Upscale tab. Same queue, same progress, same gallery - only the workflow
+// and the fields differ, so the route is the only place that has to know. The
+// kind is stamped here rather than trusted from the body, and the pre-flight
+// runs against upscale_api.json: the two graphs share no node ids, so a stale id
+// in one must not be reported as missing from the other.
+route('POST', '/api/upscale', async (req, res) => {
+  bindingGuard(state.config.upscaleBindings, P.upscaleWorkflow);
+  const body = await readJson(req);
+  const job = runner.enqueue({ ...(body ?? {}), kind: 'upscale' });
   json(res, 202, job);
 });
 
@@ -569,10 +630,17 @@ route('DELETE', '/api/history/:id', async (req, res, url, { id }) => {
 
 // ------------------------------------------------------------ binding check
 
-export function validateBindings(bindings) {
+/**
+ * Check every binding against the workflow it actually points at.
+ *
+ * `workflowFile` defaults to the generate graph; the Upscale tab's bindings are
+ * checked against upscale_api.json, which shares no node ids with it, so passing
+ * the wrong file here would report everything as missing.
+ */
+export function validateBindings(bindings, workflowFile = P.workflow) {
   let wf;
   try {
-    wf = JSON.parse(fs.readFileSync(P.workflow, 'utf8'));
+    wf = JSON.parse(fs.readFileSync(workflowFile, 'utf8'));
   } catch (e) {
     return [{ binding: '*', ok: false, reason: `cannot read workflow: ${e.message}` }];
   }
@@ -663,9 +731,16 @@ server.listen(c.server.port, c.server.host, () => {
   console.log(`  auth env   ${envFilePath()}`);
   console.log(`  downloads  ${P.downloadDir}${fs.existsSync(P.downloadDir) ? '' : '  (created on first run)'}`);
   const bad = validateBindings(c.bindings).filter((r) => !r.ok);
-  if (bad.length) {
-    console.warn(`  ⚠ ${bad.length} binding problem(s):`);
-    for (const b of bad) console.warn(`     ${b.binding}${b.slot ? ` #${b.slot}` : ''}: ${b.reason}`);
+  // Warn about both, tagged, because the two files share no node ids and a
+  // broken upscale binding would otherwise be reported as a missing node in a
+  // graph that does not contain it.
+  const upBad = fs.existsSync(P.upscaleWorkflow)
+    ? validateBindings(c.upscaleBindings, P.upscaleWorkflow).filter((r) => !r.ok)
+    : [];
+  for (const [label, list] of [['binding', bad], ['upscale binding', upBad]]) {
+    if (!list.length) continue;
+    console.warn(`  ⚠ ${list.length} ${label} problem(s):`);
+    for (const b of list) console.warn(`     ${b.binding}${b.slot ? ` #${b.slot}` : ''}: ${b.reason}`);
   }
 });
 

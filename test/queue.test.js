@@ -8,9 +8,15 @@ import { fileURLToPath } from 'node:url';
 import { init, saveConfig, paths } from '../lib/config.js';
 import { ComfyClient } from '../lib/comfy.js';
 import { runner } from '../lib/runner.js';
+import * as gallery from '../lib/gallery.js';
 import { startFakeComfyUI, textOf, sleep, waitFor, dropRoot } from './helpers/fakeComfy.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const WORKFLOW = JSON.parse(fs.readFileSync(path.join(ROOT, 'workflow_api.json'), 'utf8'));
+// What nodes 256 and 44 ship with, so "we left it alone" can be asserted by
+// value rather than by trusting that a no-op write really was a no-op.
+const WORKFLOW_POSTPROMPT_DEFAULT = WORKFLOW['256'].inputs.value;
+const WORKFLOW_RAW_DEFAULT = WORKFLOW['44'].inputs.value;
 
 /** Point the whole app at a throwaway root + a given ComfyUI port. */
 function useTempRoot(port) {
@@ -20,6 +26,7 @@ function useTempRoot(port) {
     comfy: { host: '127.0.0.1', port, timeoutMs: 5000 },
     // Absolute, so the temp root does not need a copy of the workflow.
     workflowFile: path.join(ROOT, 'workflow_api.json'),
+    upscaleWorkflowFile: path.join(ROOT, 'upscale_api.json'),
     downloadDir: path.join(root, 'downloads'),
     dataDir: path.join(root, 'data'),
     promptTextNodes: ['181'],
@@ -51,6 +58,27 @@ const JOB = (prompt, batch = 1) => ({
   stepsOverride: null,
   consistency: true,
 });
+
+/** An upscale request: one image, taken from a picture the gallery already holds. */
+const UPSCALE = (scale = 2, extra = {}) => {
+  const src = gallery.addEntry({
+    prompt: 'an earlier run',
+    at: new Date().toISOString(),
+    comfyFilename: 'ComfyUI_00001_.png',
+    subfolder: '',
+    type: 'output',
+    localName: 'earlier.png',
+  });
+  return { kind: 'upscale', slots: [{ ref: src.id }], scale, collectImages: true, ...extra };
+};
+
+/** Finish prompts as they arrive, so a two-job queue drains without help. */
+function autoFinish(comfy) {
+  const t = setInterval(() => {
+    if (comfy.state.pending.size) comfy.completeAll();
+  }, 100);
+  return () => clearInterval(t);
+}
 
 test('submit all hands the running job\'s tail AND the waiting jobs to ComfyUI', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
@@ -348,6 +376,238 @@ test('a prompt cleared out of the queue never grows a timer, because it never ge
   } finally {
     cleanup();
     await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('a pinned seed reaches every run of the job, and the history row', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue({ ...JOB('pinned seed', 3), seed: '1234567' });
+    await waitFor(() => comfy.state.prompts.length === 1, 'the first prompt to be handed over');
+
+    // The recorded seed is the one in the payload, not a second roll.
+    assert.equal(runner.get(a.id).runs[0].seed, 1234567);
+    assert.equal(comfy.state.prompts[0].payload['37'].inputs.seed, 1234567);
+
+    const finisher = setInterval(() => {
+      if (comfy.state.pending.size) comfy.completeAll();
+    }, 100);
+    comfy.completeAll();
+    try {
+      await waitFor(() => runner.get(a.id).status === 'done', 'the job to finish');
+    } finally {
+      clearInterval(finisher);
+    }
+
+    // Every run of a pinned job uses the same seed - which is why the page warns
+    // about it when a batch or a shuffle is more than one.
+    assert.deepEqual(runner.get(a.id).runs.map((r) => r.seed), [1234567, 1234567, 1234567]);
+    assert.deepEqual(comfy.state.prompts.map((p) => p.payload['37'].inputs.seed), [1234567, 1234567, 1234567]);
+
+    // The history row keeps the seed so the tab can list and copy it.
+    const saved = JSON.parse(fs.readFileSync(path.join(root, 'data', 'history.json'), 'utf8'));
+    const row = saved.entries.find((e) => e.jobId === a.id);
+    assert.deepEqual(row.seeds, [1234567, 1234567, 1234567]);
+    assert.equal(row.settings.seed, 1234567, 'and the pinned value comes back with the prompt');
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('a job without a seed still rolls a fresh one per run', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue(JOB('random seed', 2));
+    await waitFor(() => comfy.state.prompts.length === 1, 'the first prompt');
+    assert.equal(runner.get(a.id).runs[0].seed !== null, true);
+
+    const finisher = setInterval(() => {
+      if (comfy.state.pending.size) comfy.completeAll();
+    }, 100);
+    comfy.completeAll();
+    try {
+      await waitFor(() => runner.get(a.id).status === 'done', 'the job to finish');
+    } finally {
+      clearInterval(finisher);
+    }
+    const seeds = runner.get(a.id).runs.map((r) => r.seed);
+    assert.equal(seeds.every((s) => Number.isInteger(s)), true);
+    assert.notEqual(seeds[0], seeds[1], 'two runs of an unpinned job must not share a seed');
+
+    // An unpinned job does not pretend it pinned anything.
+    const saved = JSON.parse(fs.readFileSync(path.join(root, 'data', 'history.json'), 'utf8'));
+    const row = saved.entries.find((e) => e.jobId === a.id);
+    assert.equal(row.settings.seed, null);
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('an upscale job runs on the shared queue and its output lands in the gallery', async () => {
+  // The upscale graph saves from 508 and has no text node, so the fake is told
+  // which node to answer on - otherwise "the image arrived" would prove nothing
+  // about which graph ran.
+  const comfy = await startFakeComfyUI({ mode: 'manual', saveNode: 508, textNode: null });
+  const root = useTempRoot(comfy.port);
+  try {
+    const up = runner.enqueue(UPSCALE(2, { seed: '4242' }));
+    const gen = runner.enqueue(JOB('a generate behind the upscale', 1));
+
+    assert.equal(up.kind, 'upscale', 'the snapshot says which kind of job this is');
+    assert.match(up.spec.prompt, /^upscale \S+ ×2$/);
+
+    await waitFor(() => comfy.state.prompts.length === 1, 'the upscale prompt');
+    assert.equal(runner.get(up.id).status, 'running');
+    assert.equal(runner.get(gen.id).status, 'queued', 'the two tabs share one queue');
+
+    // The picture went to ComfyUI's input dir and its own name came back into
+    // LoadImage - a generated image lives in the output dir and LoadImage cannot
+    // see it, so this hop is the whole reason reuse-from-gallery works.
+    const wf = comfy.state.prompts[0].payload;
+    assert.equal(wf['538'].inputs.image, comfy.state.uploads[0]);
+    assert.equal(wf['517'].inputs.value, 2);
+    assert.equal(wf['536'].inputs.seed, 4242);
+    assert.equal(wf['526'].inputs.value, false);
+    assert.equal(wf['530'].inputs.switch, false);
+    assert.equal(wf['544'].inputs.value, '', 'blank guidance leaves the node\'s own text in place');
+
+    const stop = autoFinish(comfy);
+    try {
+      await waitFor(() => runner.get(up.id).status === 'done', 'the upscale to finish');
+      await waitFor(() => runner.get(gen.id).status === 'done', 'the generate behind it to finish');
+    } finally {
+      stop();
+    }
+
+    // It arrived as a normal gallery entry, tagged with the kind that made it.
+    const entries = gallery.listEntries({ jobId: up.id });
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].kind, 'upscale');
+    assert.equal(entries[0].localPath !== null, true, 'and it was downloaded');
+
+    const saved = JSON.parse(fs.readFileSync(path.join(root, 'data', 'history.json'), 'utf8'));
+    const row = saved.entries.find((e) => e.jobId === up.id);
+    assert.equal(row.settings.kind, 'upscale');
+    assert.equal(row.settings.scale, 2);
+    assert.deepEqual(row.seeds, [4242]);
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('scale to a target size carries the width and height into both switches', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual', saveNode: 508, textNode: null });
+  const root = useTempRoot(comfy.port);
+  try {
+    // A generate job first, so this also proves the upscale can queue BEHIND the
+    // other tab - the shared queue is FIFO, not "generates first".
+    const gen = runner.enqueue(JOB('generate first this time', 1));
+    const up = runner.enqueue(UPSCALE(2, { scaleToDim: true, targetWidth: '3000', targetHeight: '2000', guidance: 'keep the grain' }));
+
+    await waitFor(() => comfy.state.prompts.length === 1, 'the generate prompt');
+    assert.equal(runner.get(up.id).status, 'queued', 'the upscale waits its turn');
+
+    const stop = autoFinish(comfy);
+    try {
+      await waitFor(() => comfy.state.prompts.length === 2, 'the upscale prompt');
+      await waitFor(() => runner.get(up.id).status === 'done', 'the upscale to finish');
+    } finally {
+      stop();
+    }
+
+    const wf = comfy.state.prompts[1].payload;
+    assert.equal(wf['528'].inputs.value, 3000);
+    assert.equal(wf['529'].inputs.value, 2000);
+    // 530 is hard-wired to `false` in the exported graph while 527 follows 526.
+    // Writing only 526 would give the upscaler a target width and a plain xscale
+    // height, i.e. a stretched picture the user never asked for.
+    assert.equal(wf['526'].inputs.value, true);
+    assert.equal(wf['530'].inputs.switch, true);
+    // Guidance is concatenated AFTER the graph's own instruction, so it adds to
+    // it rather than replacing it.
+    assert.equal(wf['544'].inputs.value, 'keep the grain');
+    assert.equal(wf['522'].inputs.value.includes('Enhance this image'), true, 'the base prompt is left alone');
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('a postprompt reaches node 256 and comes back in the saved history row', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = useTempRoot(comfy.port);
+  const stop = autoFinish(comfy);
+  try {
+    // Enhanced path. The prompt goes to node 41 (the enhance toggle sends it
+    // there) and the postprompt still lands in 256, because node 257 hangs the
+    // postprompt off the branch OUTPUT - it is applied whatever the branch did.
+    const job = runner.enqueue({ ...JOB('a cat in a kitchen', 1), postprompt: '\n\nin the style of a pencil sketch' });
+    await waitFor(() => comfy.state.prompts.length === 1, 'the prompt to reach ComfyUI');
+    const wf = comfy.state.prompts[0].payload;
+    assert.equal(wf['256'].inputs.value, '\n\nin the style of a pencil sketch', 'written verbatim');
+    assert.equal(wf['41'].inputs.value, 'a cat in a kitchen');
+    assert.equal(wf['44'].inputs.value, WORKFLOW_RAW_DEFAULT, 'the editor\'s own raw text is untouched');
+
+    // Raw path: same postprompt, and it is still on the wire.
+    const raw = runner.enqueue({
+      ...JOB('a dog in a park', 1),
+      promptEnhance: false,
+      postprompt: 'at golden hour',
+    });
+    await waitFor(() => comfy.state.prompts.length === 2, 'the raw prompt');
+    assert.equal(comfy.state.prompts[1].payload['44'].inputs.value, 'a dog in a park');
+    assert.equal(comfy.state.prompts[1].payload['256'].inputs.value, 'at golden hour');
+    assert.equal(comfy.state.prompts[1].payload['176'].inputs.cond, false, 'the branch really is on raw');
+
+    // No postprompt at all leaves the editor's own node 256 text alone rather
+    // than blanking it.
+    const plain = runner.enqueue(JOB('no postprompt here', 1));
+    await waitFor(() => comfy.state.prompts.length === 3, 'the third prompt');
+    assert.equal(comfy.state.prompts[2].payload['256'].inputs.value, WORKFLOW_POSTPROMPT_DEFAULT);
+
+    await waitFor(() => runner.get(job.id).status === 'done', 'the first run to finish');
+    await waitFor(() => runner.get(raw.id).status === 'done', 'the raw run to finish');
+    await waitFor(() => runner.get(plain.id).status === 'done', 'the plain run to finish');
+
+    // The row has to be able to put the box back, so the text is recorded even
+    // though the captured prompt already ends up containing it.
+    const rows = JSON.parse(fs.readFileSync(path.join(root, 'data', 'history.json'), 'utf8')).entries;
+    const row = rows.find((r) => r.jobId === job.id);
+    assert.equal(row.settings.postprompt, '\n\nin the style of a pencil sketch');
+    assert.equal(rows.find((r) => r.jobId === plain.id).settings.postprompt, '');
+  } finally {
+    stop();
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('an upscale with no image is refused before anything is queued', () => {
+  const root = useTempRoot(8188);
+  try {
+    const before = runner.list().length;
+    assert.throws(
+      () => runner.enqueue({ kind: 'upscale', slots: [], scale: 2 }),
+      (e) => {
+        assert.equal(e.status, 400);
+        assert.match(e.message, /image to upscale is required/);
+        return true;
+      },
+    );
+    assert.equal(runner.list().length, before, 'nothing reached the queue');
+  } finally {
+    cleanup();
     dropRoot(root);
   }
 });

@@ -266,6 +266,25 @@ test('history is capped at 300 entries, dropping the oldest', () => {
   assert.equal(all[all.length - 1].prompt, 'p5');
 });
 
+test('a postprompt survives the round trip that restores the box', () => {
+  freshRoot();
+  record({ prompt: 'a cat', settings: { ...SETTINGS, postprompt: '\n\npencil sketch' }, slots: [], jobId: 'j-pp' });
+  finish('j-pp', { status: 'done', results: 1, seeds: [1] });
+  assert.equal(list()[0].settings.postprompt, '\n\npencil sketch');
+});
+
+test('two runs that differ only by their postprompt are two rows', () => {
+  // The fingerprint covers the whole settings object, so a job submitted with a
+  // different tail cannot be folded into the previous one - which would silently
+  // re-run it with the wrong postprompt and leave the row showing the new text.
+  freshRoot();
+  record({ prompt: 'a cat', settings: { ...SETTINGS, postprompt: 'at dusk' }, slots: [], jobId: 'j-1' });
+  record({ prompt: 'a cat', settings: { ...SETTINGS, postprompt: 'at dawn' }, slots: [], jobId: 'j-2' });
+  const rows = list();
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.settings.postprompt).sort(), ['at dawn', 'at dusk']);
+});
+
 test('record survives a server that cannot write history', () => {
   const root = freshRoot();
   // Put a plain file where the data directory belongs. mkdirSync on an existing

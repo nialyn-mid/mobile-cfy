@@ -27,6 +27,13 @@
     <textarea id="prompt" rows="4" placeholder="write prompt here" autofocus></textarea>
   </label>
 
+  <label class="field">
+    <span class="lbl">Postprompt
+      <a id="helpPostprompt" class="hint" title="how this works">?</a>
+    </span>
+    <textarea id="postprompt" rows="2" placeholder="optional - added to the prompt after enhancement"></textarea>
+  </label>
+
   <div class="card">
     <div class="card-hd">Toggles</div>
     <label class="switch"><input type="checkbox" id="enhance" checked><span></span>
@@ -74,6 +81,11 @@
       <label class="field"><span class="lbl">Shuffle</span>
         <input type="number" id="shuffle" value="1" min="1" step="1" inputmode="numeric"></label>
     </div>
+    <label class="field"><span class="lbl">Seed
+      <a href="#" id="helpSeed" class="hint">?</a></span>
+      <input type="text" id="seed" placeholder="random" inputmode="numeric"
+        autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"></label>
+    <p class="note" id="seedNote" hidden></p>
     <label class="field"><span class="lbl">Prompt refresh
       <a href="#" id="helpRefresh" class="hint">?</a></span>
       <select id="refresh">
@@ -96,6 +108,80 @@
   </div>
 
   <button id="generate" class="btn primary big" type="button">Generate</button>
+</section>
+
+<!-- ────────────────────────────── UPSCALE ────────────────────────────── -->
+<!-- Its own inputs, but it borrows the queue and the job panel below: ComfyUI
+     has one GPU, so an upscale waits its turn behind whatever is generating and
+     the page has to be able to show that. -->
+<section id="tab-upscale" class="tab">
+  <div class="card">
+    <div class="card-hd">
+      <span>Image to upscale</span>
+      <span class="btnrow">
+        <button id="upPickGallery" class="btn ghost sm" type="button">⤓ from gallery</button>
+        <button id="upClear" class="btn ghost sm" type="button">clear</button>
+      </span>
+    </div>
+    <div id="upSlot" class="slots"></div>
+    <p class="note" id="upSlotNote" hidden></p>
+    <input id="upFilePick" type="file" accept="image/*" hidden>
+  </div>
+
+  <div class="card">
+    <div class="card-hd"><span>Size</span></div>
+    <label class="field">
+      <span class="lbl">Scale multiplier <a href="#" id="helpUpScale" class="hint">?</a></span>
+      <input type="number" id="upScale" value="2" step="0.25" min="0.1" max="16" inputmode="decimal">
+    </label>
+    <label class="switch">
+      <input type="checkbox" id="upScaleToDim">
+      <span>Scale to a target size instead of a multiplier</span>
+    </label>
+    <div class="row2" id="upDims">
+      <label class="field">
+        <span class="lbl">Target width <a href="#" id="helpUpW" class="hint">?</a></span>
+        <input type="number" id="upTargetWidth" value="2048" step="64" min="64" max="8192" inputmode="numeric">
+      </label>
+      <label class="field">
+        <span class="lbl">Target height</span>
+        <input type="number" id="upTargetHeight" value="2048" step="64" min="64" max="8192" inputmode="numeric">
+      </label>
+    </div>
+    <p class="note" id="upSizeNote" hidden></p>
+  </div>
+
+  <div class="card">
+    <div class="card-hd"><span>Guidance</span></div>
+    <label class="field">
+      <span class="lbl">Extra instruction <a href="#" id="helpUpGuidance" class="hint">?</a></span>
+      <textarea id="upGuidance" rows="3" placeholder="optional - added after the workflow's own upscale instruction"></textarea>
+    </label>
+    <p class="note">The workflow already tells the model to enhance the image to high resolution and keep the composition. Anything you add here is appended to that sentence.</p>
+  </div>
+
+  <div class="card">
+    <div class="card-hd"><span>Run</span></div>
+    <div class="row2">
+      <label class="field">
+        <span class="lbl">Seed <a href="#" id="helpUpSeed" class="hint">?</a></span>
+        <input type="text" id="upSeed" placeholder="random" inputmode="numeric" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+      </label>
+      <label class="switch">
+        <input type="checkbox" id="upDownload" checked>
+        <span>Download results</span>
+      </label>
+    </div>
+    <p class="note" id="upMath"></p>
+  </div>
+
+  <button id="upscale" class="btn primary big" type="button">Upscale</button>
+</section>
+
+<!-- ────────────── SHARED QUEUE + JOB PANEL (Generate and Upscale) ────────────── -->
+<!-- One queue for both kinds of work, so the queue strip and the progress panel
+     are shown on whichever tab asked for the work rather than being duplicated. -->
+<section class="tab active" data-for="generate upscale">
   <p class="note" id="queueHint" hidden></p>
   <p class="note warn" id="queuePaused" hidden></p>
   <div class="btnrow" id="queueBar" hidden>
@@ -179,9 +265,17 @@
   <div class="card">
     <div class="card-hd">
       Node bindings
-      <button id="checkBindings" class="btn ghost sm" type="button">check</button>
+      <span class="btnrow">
+        <label class="btn ghost sm">for
+          <select id="bindKind">
+            <option value="generate">Generate</option>
+            <option value="upscale">Upscale</option>
+          </select>
+        </label>
+        <button id="checkBindings" class="btn ghost sm" type="button">check</button>
+      </span>
     </div>
-    <p class="note">Every feature points at a workflow node. A wrong id fails silently, so check after editing.</p>
+    <p class="note">Every feature points at a workflow node. A wrong id fails silently, so check after editing. Generate and Upscale are two different files with no shared node ids, so they get their own set.</p>
     <div id="bindings" class="bindings"></div>
     <div class="btnrow">
       <button id="saveBindings" class="btn primary sm" type="button">Save bindings</button>
@@ -194,6 +288,7 @@
     <div class="card-hd">Workflow</div>
     <div class="btnrow">
       <label class="btn ghost sm">replace workflow_api.json<input id="wfUpload" type="file" accept="application/json,.json" hidden></label>
+      <label class="btn ghost sm">replace upscale_api.json<input id="upWfUpload" type="file" accept="application/json,.json" hidden></label>
       <span id="wfMsg" class="note"></span>
     </div>
     <details id="nodeListWrap">
@@ -220,11 +315,20 @@
 
 <nav class="tabs">
   <button class="tabbtn active" data-tab="generate" type="button">Generate</button>
+  <button class="tabbtn" data-tab="upscale" type="button">Upscale</button>
   <button class="tabbtn" data-tab="gallery" type="button">Gallery</button>
   <button class="tabbtn" data-tab="history" type="button">History</button>
   <button class="tabbtn" data-tab="settings" type="button">Settings</button>
 </nav>
 
+<input id="upPickList" type="hidden">
+<div id="pickModal" class="modal" hidden>
+  <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="pickTitle">
+    <h2 id="pickTitle">Pick an image to upscale</h2>
+    <div id="pickList" class="pickgrid"></div>
+    <div class="btnrow"><button id="pickCancel" class="btn ghost sm" type="button">cancel</button></div>
+  </div>
+</div>
 <input id="filePick" type="file" accept="image/*" multiple hidden>
 <div id="lightbox" class="lightbox" hidden>
   <div class="lb-stage"><img id="lightboxImg" alt="" draggable="false"></div>
@@ -241,6 +345,7 @@
       <button class="btn ghost sm" id="lbReset" type="button">fit</button>
     </span>
     <button class="btn ghost sm" id="lbUse" type="button">⟳ add to prompt</button>
+    <button class="btn ghost sm" id="lbUpscale" type="button">⤒ upscale this</button>
     <button class="btn ghost sm" id="lbClose" type="button">-✕-</button>
   </div>
 </div>

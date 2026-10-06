@@ -50,7 +50,7 @@
   },
   "9": {
     "inputs": {
-      "aspect_ratio": "1:1 (Square)",
+      "aspect_ratio": "16:9 (Widescreen)",
       "megapixels": [
         "232",
         0
@@ -109,7 +109,7 @@
   },
   "11": {
     "inputs": {
-      "image": "S7_00040_.png"
+      "image": "png-clipart-planet-earth-earth-icon-earth-globe-world-thumbnail.png"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -372,7 +372,7 @@
   },
   "37": {
     "inputs": {
-      "seed": 984792413816140
+      "seed": 555376514080655
     },
     "class_type": "SeedNode",
     "_meta": {
@@ -390,7 +390,7 @@
   },
   "44": {
     "inputs": {
-      "value": "anime-styled illustration\n4 view character design of anime girl character in a new 3d gacha game\nensure consistency in views"
+      "value": "anime style illustration of a girl"
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
@@ -528,7 +528,7 @@
   "73": {
     "inputs": {
       "string_a": [
-        "176",
+        "257",
         0
       ],
       "string_b": [
@@ -644,7 +644,7 @@
         0
       ],
       "on_true": [
-        "250",
+        "253",
         0
       ]
     },
@@ -721,7 +721,7 @@
   },
   "125": {
     "inputs": {
-      "filename_prefix": "latent/qwen-image-2.1",
+      "filename_prefix": "latent-mid/qwen-image-2.1",
       "samples": [
         "18",
         0
@@ -734,7 +734,7 @@
   },
   "126": {
     "inputs": {
-      "latent": null
+      "latent": "qwen-image-2.1_00002_.latent"
     },
     "class_type": "LoadLatent",
     "_meta": {
@@ -1157,7 +1157,7 @@
   },
   "176": {
     "inputs": {
-      "cond": true,
+      "cond": false,
       "tt_value": [
         "59",
         0
@@ -1191,7 +1191,7 @@
       "filename_prefix": "enhanced/prompt",
       "format": "txt",
       "text": [
-        "176",
+        "257",
         0
       ]
     },
@@ -1294,7 +1294,7 @@
   },
   "207": {
     "inputs": {
-      "value": true
+      "value": false
     },
     "class_type": "PrimitiveBoolean",
     "_meta": {
@@ -1517,7 +1517,7 @@
   "229": {
     "inputs": {
       "prompts": [
-        "176",
+        "257",
         0
       ],
       "negative_prompt": "",
@@ -1582,7 +1582,7 @@
   },
   "232": {
     "inputs": {
-      "value": 0.3
+      "value": 1
     },
     "class_type": "PrimitiveFloat",
     "_meta": {
@@ -1830,6 +1830,48 @@
     "class_type": "QwenImage21TextEncodeList",
     "_meta": {
       "title": "Text Encode Qwen Image 2.1 (List)"
+    }
+  },
+  "253": {
+    "inputs": {
+      "conditioning": [
+        "250",
+        0
+      ],
+      "clip": [
+        "82",
+        0
+      ]
+    },
+    "class_type": "PromptEnhancerReleaseTextEncoder",
+    "_meta": {
+      "title": "Release Text Encoder (VRAM)"
+    }
+  },
+  "256": {
+    "inputs": {
+      "value": "\n"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Postprompt"
+    }
+  },
+  "257": {
+    "inputs": {
+      "string_a": [
+        "176",
+        0
+      ],
+      "string_b": [
+        "256",
+        0
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
     }
   }
 }

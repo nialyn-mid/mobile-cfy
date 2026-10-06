@@ -1,0 +1,525 @@
+{
+  "483": {
+    "inputs": {
+      "vae_name": "qwen_image_2.1_vae_bf16.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "491": {
+    "inputs": {
+      "samples": [
+        "542",
+        0
+      ],
+      "vae": [
+        "483",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "496": {
+    "inputs": {
+      "image": [
+        "538",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "502": {
+    "inputs": {
+      "expression": "a * min(4, sqrt((c*d)/(a*b)))",
+      "values.a": [
+        "496",
+        0
+      ],
+      "values.b": [
+        "496",
+        1
+      ],
+      "values.c": [
+        "528",
+        0
+      ],
+      "values.d": [
+        "529",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "503": {
+    "inputs": {
+      "expression": "b * min(4, sqrt((c*d)/(a*b)))",
+      "values.a": [
+        "496",
+        0
+      ],
+      "values.b": [
+        "496",
+        1
+      ],
+      "values.c": [
+        "528",
+        0
+      ],
+      "values.d": [
+        "529",
+        0
+      ]
+    },
+    "class_type": "ComfyMathExpression",
+    "_meta": {
+      "title": "Math Expression"
+    }
+  },
+  "504": {
+    "inputs": {
+      "unet_name": "qwen-image-2.1-UC-Q4_K_M.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "506": {
+    "inputs": {
+      "prompts": [
+        "543",
+        0
+      ],
+      "negative_prompt": "",
+      "resolution": 1024,
+      "width": [
+        "527",
+        0
+      ],
+      "height": [
+        "530",
+        0
+      ],
+      "batch_size": 1,
+      "clip": [
+        "540",
+        0
+      ],
+      "vae": [
+        "483",
+        0
+      ],
+      "image_1": [
+        "538",
+        0
+      ]
+    },
+    "class_type": "QwenImage21TextEncodeList",
+    "_meta": {
+      "title": "Text Encode Qwen Image 2.1 (List)"
+    }
+  },
+  "507": {
+    "inputs": {
+      "conditioning": [
+        "506",
+        0
+      ],
+      "clip": [
+        "540",
+        0
+      ]
+    },
+    "class_type": "PromptEnhancerReleaseTextEncoder",
+    "_meta": {
+      "title": "Release Text Encoder (VRAM)"
+    }
+  },
+  "508": {
+    "inputs": {
+      "filename_prefix": [
+        "535",
+        0
+      ],
+      "images": [
+        "491",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "515": {
+    "inputs": {
+      "operation": "multiplication",
+      "float_1": [
+        "517",
+        0
+      ],
+      "float_2": [
+        "520",
+        0
+      ]
+    },
+    "class_type": "CyclistMathFloat",
+    "_meta": {
+      "title": "Float Math"
+    }
+  },
+  "516": {
+    "inputs": {
+      "operation": "multiplication",
+      "float_1": [
+        "517",
+        0
+      ],
+      "float_2": [
+        "521",
+        0
+      ]
+    },
+    "class_type": "CyclistMathFloat",
+    "_meta": {
+      "title": "Float Math"
+    }
+  },
+  "517": {
+    "inputs": {
+      "value": 2
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Scale Multiplier"
+    }
+  },
+  "518": {
+    "inputs": {
+      "input1": [
+        "516",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2Int",
+    "_meta": {
+      "title": "Convert to Int"
+    }
+  },
+  "519": {
+    "inputs": {
+      "input1": [
+        "515",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2Int",
+    "_meta": {
+      "title": "Convert to Int"
+    }
+  },
+  "520": {
+    "inputs": {
+      "input1": [
+        "496",
+        1
+      ]
+    },
+    "class_type": "ConvertAny2Float",
+    "_meta": {
+      "title": "Convert to Float"
+    }
+  },
+  "521": {
+    "inputs": {
+      "input1": [
+        "496",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2Float",
+    "_meta": {
+      "title": "Convert to Float"
+    }
+  },
+  "522": {
+    "inputs": {
+      "value": "Enhance this image to high resolution while preserving the original composition, lighting, and atmosphere. Keep the original input style."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Upscale Prompt"
+    }
+  },
+  "523": {
+    "inputs": {
+      "input1": [
+        "527",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2String",
+    "_meta": {
+      "title": "Convert to String"
+    }
+  },
+  "526": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Scale To Dim"
+    }
+  },
+  "527": {
+    "inputs": {
+      "switch": [
+        "526",
+        0
+      ],
+      "on_false": [
+        "518",
+        0
+      ],
+      "on_true": [
+        "502",
+        1
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "528": {
+    "inputs": {
+      "value": 2048
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Target Width"
+    }
+  },
+  "529": {
+    "inputs": {
+      "value": 2048
+    },
+    "class_type": "PrimitiveInt",
+    "_meta": {
+      "title": "Target Height"
+    }
+  },
+  "530": {
+    "inputs": {
+      "switch": false,
+      "on_false": [
+        "519",
+        0
+      ],
+      "on_true": [
+        "503",
+        1
+      ]
+    },
+    "class_type": "ComfySwitchNode",
+    "_meta": {
+      "title": "If/Else Switch"
+    }
+  },
+  "531": {
+    "inputs": {
+      "input1": [
+        "530",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2String",
+    "_meta": {
+      "title": "Convert to String"
+    }
+  },
+  "532": {
+    "inputs": {
+      "string_a": [
+        "523",
+        0
+      ],
+      "string_b": [
+        "531",
+        0
+      ],
+      "delimiter": "x"
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "534": {
+    "inputs": {
+      "string_a": "qwen-image-2.1/upscale/",
+      "string_b": [
+        "532",
+        0
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "535": {
+    "inputs": {
+      "string_a": [
+        "534",
+        0
+      ],
+      "string_b": "_",
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "536": {
+    "inputs": {
+      "seed": 15812722140941
+    },
+    "class_type": "SeedNode",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "538": {
+    "inputs": {
+      "image": "S7_00162_.png"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Image To Upscale"
+    }
+  },
+  "540": {
+    "inputs": {
+      "clip_name": "qwen3vl_8b_int8_convrot.safetensors",
+      "type": "qwen_image",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "541": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": [
+        "536",
+        0
+      ],
+      "steps": 25,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 0,
+      "end_at_step": 4,
+      "return_with_leftover_noise": "enable",
+      "model": [
+        "504",
+        0
+      ],
+      "positive": [
+        "507",
+        0
+      ],
+      "negative": [
+        "506",
+        1
+      ],
+      "latent_image": [
+        "506",
+        2
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "542": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": [
+        "536",
+        0
+      ],
+      "steps": 25,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "start_at_step": 4,
+      "end_at_step": 24,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "504",
+        0
+      ],
+      "positive": [
+        "507",
+        0
+      ],
+      "negative": [
+        "506",
+        1
+      ],
+      "latent_image": [
+        "541",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced)"
+    }
+  },
+  "543": {
+    "inputs": {
+      "string_a": [
+        "522",
+        0
+      ],
+      "string_b": [
+        "544",
+        0
+      ],
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "544": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "Guidance Prompt"
+    }
+  }
+}

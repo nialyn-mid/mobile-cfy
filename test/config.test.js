@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { parseEnv } from '../lib/env.js';
 import {
   deepMerge, mergeConfig, migrateBindings, migrateValues,
-  BINDING_MIGRATIONS, DEFAULTS, expandHome,
+  BINDING_MIGRATIONS, DEFAULTS, expandHome, init, saveConfig, paths,
 } from '../lib/config.js';
 import { ASPECT_RATIOS } from '../lib/payload.js';
 
@@ -70,6 +70,8 @@ test('defaults match the real workflow node ids', () => {
   const b = DEFAULTS.bindings;
   assert.equal(b.promptEnhanced.node, '41');
   assert.equal(b.promptRaw.node, '44');
+  assert.equal(b.postprompt.node, '256');
+  assert.equal(b.postprompt.input, 'value');
   assert.equal(b.enhanceSwitch.node, '176');
   assert.equal(b.enhanceSwitch.input, 'cond');
   assert.equal(b.imageCount.node, '158');
@@ -234,4 +236,72 @@ test('a binding the user customised by hand is preserved', () => {
   });
   assert.deepEqual(merged.bindings.seed, { node: '99', input: 'noise_seed' });
   assert.deepEqual(merged.staleBindings, []);
+});
+
+// ------------------------------------------------- the second workflow
+
+test('the two binding maps are separate, and each reports its own stale names', () => {
+  const merged = mergeConfig(DEFAULTS, {
+    bindings: { legacySwitch: { node: '12', input: 'value' } },
+    upscaleBindings: { oldUpscale: { node: '5', input: 'value' } },
+  });
+  assert.deepEqual(merged.staleBindings, ['legacySwitch']);
+  assert.deepEqual(merged.staleUpscaleBindings, ['oldUpscale']);
+  // A stale generate name must not evict an upscale binding of the same shape.
+  assert.equal('oldUpscale' in merged.upscaleBindings, false);
+  assert.equal('legacySwitch' in merged.bindings, false);
+  assert.deepEqual(merged.bindings.seed, DEFAULTS.bindings.seed, 'and the real ones survive');
+  assert.deepEqual(merged.upscaleBindings.scale, DEFAULTS.upscaleBindings.scale);
+});
+
+test('a hand-edited upscale binding is preserved, like any other', () => {
+  const merged = mergeConfig(DEFAULTS, {
+    upscaleBindings: { guidance: { node: '999', input: 'value' } },
+  });
+  assert.deepEqual(merged.upscaleBindings.guidance, { node: '999', input: 'value' });
+  assert.deepEqual(merged.staleUpscaleBindings, []);
+});
+
+test('the saved config never keeps the "these were stale" reports', () => {
+  // They are an answer to the request that caused them, not configuration: left
+  // in config.json they would be re-reported on every later read.
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mobile-cfy-cfg-'));
+  try {
+    init(root);
+    const saved = saveConfig({ upscaleBindings: { ...DEFAULTS.upscaleBindings, ghost: { node: '1', input: 'x' } } });
+    assert.deepEqual(saved.staleUpscaleBindings, ['ghost']);
+    const onDisk = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
+    assert.equal('staleUpscaleBindings' in onDisk, false);
+    assert.equal('staleBindings' in onDisk, false);
+    assert.equal('ghost' in onDisk.upscaleBindings, false, 'the dropped name is not written either');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the upscale workflow is resolved to a real file next to the app', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mobile-cfy-cfg-'));
+  try {
+    init(root);
+    const p = paths();
+    assert.equal(path.basename(p.upscaleWorkflow), DEFAULTS.upscaleWorkflowFile);
+    assert.equal(path.dirname(p.upscaleWorkflow), p.root);
+    // Both graphs live in the same place, and they are not the same file.
+    assert.equal(path.dirname(p.upscaleWorkflow), path.dirname(p.workflow));
+    assert.notEqual(p.upscaleWorkflow, p.workflow);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('every default upscale binding points at a node the upscale graph has', () => {
+  const wf = JSON.parse(fs.readFileSync(path.join(ROOT, DEFAULTS.upscaleWorkflowFile), 'utf8'));
+  for (const [key, binding] of Object.entries(DEFAULTS.upscaleBindings)) {
+    const node = wf[String(binding.node)];
+    assert.ok(node, `upscale binding ${key}: node ${binding.node} is not in ${DEFAULTS.upscaleWorkflowFile}`);
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(node.inputs ?? {}, binding.input),
+      `upscale binding ${key}: node ${binding.node} has no input "${binding.input}"`,
+    );
+  }
 });

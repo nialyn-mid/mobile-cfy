@@ -4,8 +4,9 @@ A small Node.js server with a mobile web UI that drives a ComfyUI Qwen-Image
 workflow from the phone. It replaces the old `comfy_gen.sh` Termux script and adds
 reference images, a prompt-enhance toggle, a turbo toggle, a Consistency LoRA
 toggle, a step override, an aspect-ratio picker (or the enhancer's own suggested
-one), a prompt history you can re-run from, and a gallery where any generated
-image can be fed straight back in as an input.
+one), an **Upscale tab** with its own second workflow, a prompt history you can
+re-run from, and a gallery where any generated image can be fed straight back in
+as an input.
 
 **No dependencies.** Node's standard library only — `npm install` is never needed,
 because installing packages in Termux is slow and occasionally broken.
@@ -57,6 +58,7 @@ ComfyUI you must restart ComfyUI, copy the new hash from its console, then press
 | Control | What it does |
 |---|---|
 | Prompt | Goes to node `41` (Input Prompt) with enhance on, or node `44` (Raw Prompt) when enhance is off |
+| Postprompt | Node `256`. Optional extra text joined onto the prompt by the workflow — see below |
 | Prompt enhance | Node `176` (`cond`). Works with reference images attached too — the enhancer reads them itself |
 | Consistency LoRA | Node `207`. On (the default) = through the LoRA, off = the plain model |
 | Turbo | Node `147`, which already selects the turbo or full GGUF (`148` / `183`) for you |
@@ -66,20 +68,57 @@ ComfyUI you must restart ComfyUI, copy the new hash from its console, then press
 | Use suggested aspect | Node `233`. On = the enhancer picks a shape that suits the prompt. It needs the enhancer, so it greys itself out when enhance is off — nothing would be producing a suggestion |
 | Aspect ratio | Node `9`'s `aspect_ratio` combo. Shown when suggested aspect is off. One of the eight the node offers: 1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9, 21:9 |
 | Batch × Shuffle | `batch × shuffle` sequential runs |
+| Seed | Blank = a fresh random seed for every run. A number pins it — see below |
 | Prompt refresh | When the override switch (node `68`) fires — see below |
 | Reference images | Up to 4, uploaded to ComfyUI's input dir before the run |
 
 Pressing **Generate** clears the prompt box and lets go of the keyboard, on
 purpose: the keyboard popping up over the queue you just added to is worse than
-scrolling up to type the next one. Attached reference images are cleared at the
-same time (with a `references cleared` toast), because the prompt they were
-attached to is gone. Pressing Generate on an *empty* prompt still raises the
-keyboard, since that one needs typing.
+scrolling up to type the next one. Attached reference images and a typed
+**postprompt** are cleared at the same time (one `postprompt and references
+cleared` toast), because the prompt they were written for is gone. Pressing
+Generate on an *empty* prompt still raises the keyboard, since that one needs
+typing.
+
+**Postprompt** is the one field that reads as if it were a suffix and is not one.
+Node `257` in the workflow joins node `256` (your postprompt) onto whichever text
+the enhance branch produced, with **no delimiter**, and the joined string is what
+both the text encoder and the SaveText node read. So:
+
+- It is applied *after* enhancement, on both paths — turning the enhancer off does
+  not bypass it.
+- It is joined **literally**. A postprompt of `\n\nas a pencil sketch` becomes
+  `…your prompt\n\nas a pencil sketch`; without your newlines it would be glued
+  onto the last word. Nothing is trimmed on the way in.
+- It ends up inside the captured prompt text, which is why the History tab needs
+  no special handling for it. The text is recorded on the row as well, so
+  tapping an old entry puts the box back exactly as you left it.
+- Blank (or only spaces) is *not* sent: node `256` keeps whatever you left in the
+  ComfyUI editor, exactly as for every other optional field.
 
 > **A broken binding will not run silently.** Every binding is checked against
 > `workflow_api.json` before a job is accepted; if one points at a node that is
 > gone, Generate refuses with the exact reason ("node 43 is not in the
 > workflow") instead of quietly producing something you did not ask for.
+
+**Seed** is the reproducibility dial. Left blank, every run rolls a fresh random
+seed (what the app has always done — there is no seed for you to see or lose).
+Type a whole number and every run of that job uses *that* seed, so the same
+prompt gives you the same image back: raise the seed again to nudge one detail,
+change the wording to move something else. It is written to node `37`, which
+every KSampler already reads.
+
+Two things the app refuses to leave ambiguous:
+
+- A pinned seed with more than one run shows a warning under the box. All the
+  runs use it, so runs whose *prompt* is also identical are identical images —
+  with a shuffle of 3 and "once per group" that is 3 copies of the first one.
+  It is allowed because it is sometimes exactly what you want (the same picture
+  at a different megapixels, say), and a checkbox-level block would be worse.
+- The field is **not** remembered across a reload. A pinned seed that silently
+  survived a page refresh would quietly re-use itself on the next, unrelated
+  prompt — the one thing this feature must never do. History *does* bring a
+  pinned seed back, because tapping an entry is an explicit "run this again".
 
 **Prompt refresh** is the interesting one. The workflow memorises the last
 enhanced prompt, so re-submitting identical text reuses it:
@@ -90,10 +129,57 @@ enhanced prompt, so re-submitting identical text reuses it:
   re-enhanced wording. Slow (the Qwen-VL enhancer dominates runtime), but the
   images differ in composition as well as in noise.
 
+**Upscale** tab
+
+A second workflow (`upscale_api.json`) with one job per image and one run each:
+
+| Control | What it does |
+|---|---|
+| Image | The one image to upscale. Upload it, drop it on the box, paste it, or pick one from the gallery. It is uploaded to ComfyUI's input dir first and the returned name is written to node `538` (LoadImage) |
+| Scale multiplier | Node `517`. Default `2`, and anything up to `16` — the workflow's own maths takes the smaller of `×N` and the 4× ceiling |
+| Scale to a target size | Node `526`. On = ignore the multiplier and aim for the two dimensions below |
+| Target width / height | Nodes `528` / `529`, each 64–8192. Only read when the switch above is on, so they are greyed out until you turn it on |
+| Guidance | Node `544`. **Added** to the workflow's own instruction (node `522`, "Enhance this image to high resolution…") rather than replacing it, so a phrase like "keep the film grain" steers the run without having to retype the base instruction |
+| Seed | Blank = random. A number pins it, exactly as on the Generate tab |
+| Download | Whether the result is saved to your download folder |
+
+Turn **Scale to a target size** on and the workflow computes one uniform factor
+`min(4, √(targetW·targetH / (w·h)))`, so the aspect ratio survives: a 3000 × 2000
+target on a 1000 × 1000 source scales by 2.45, not by 3 and 2 separately.
+
+> **Both halves of the size switch are written.** The graph's height switch (node
+> `530`) is a hard-wired `false` in the export while the width switch (node `527`)
+> follows `526`. Taken literally that would aim at the target *width* and a plain
+> `×N` *height*, throwing the aspect away — so both are written from the one toggle.
+> `530` stays its own editable binding, which is what keeps the "every node id is
+> configurable" promise honest.
+
+Both tabs share **one queue**, because ComfyUI has one GPU and one queue: an
+upscale waiting behind a shuffle holds up the next generate, and the queue bar,
+the pause/send-all controls, cancel, per-run timers and shutdown handover all
+appear on both tabs. Upscale rows are marked `⤒`, and so are their gallery groups
+and history entries.
+
+Upscaling one image per job is deliberate — the workflow has a single LoadImage —
+so upscaling four pictures means four jobs. They queue like anything else.
+
+Under the hood it is `POST /api/upscale` with
+`{slots:[{uploadId}], scale, scaleToDim, targetWidth, targetHeight, guidance, seed,
+collectImages}` returning `202` and a normal job object — the same shape a generate
+returns, so everything downstream (queue, events, cancel, gallery, history) needed
+no new code. The graph itself is read and replaced through
+`GET`/`PUT /api/upscale/workflow`, which never touches `workflow_api.json`.
+
+The upscale graph is checked before a job is accepted, exactly like the generate
+one, and **a broken upscale binding does not block a generate**: they point at two
+different files and share no node ids.
+
 **Gallery** tab keeps every image this and previous sessions produced, grouped by
 job. Tap a job header to fold its images away — the folded set is remembered, so
 a long gallery stays readable between reloads. `⟳ use as input` drops an image
-into the next free reference slot.
+into the next free reference slot, `⤒ upscale this` opens the Upscale tab with it
+already in place, and an upscale job's group is marked `⤒` so it is never confused
+with a generation.
 
 **History** tab is the prompt memory. Every prompt you submit is written to
 `data/history.json` before the job starts, so it is there even if the run
@@ -112,6 +198,15 @@ Two details worth knowing:
   id), not copies. If you clear the gallery or the upload is pruned, the
   thumbnail shows `?` and the prompt loads without that reference, with a
   toast telling you how many are missing.
+- The **seeds** row under each entry is the answer to "what did that run use?".
+  `copy` puts every seed of the job on the clipboard, one per line, and `use`
+  pins the first one and drops you on the Generate tab — so re-typing a 10-digit
+  number by hand is never necessary. Entries with no seed of their own (older
+  rows, or ones still queued) show nothing there rather than an empty box.
+- Upscale entries are marked `⤒`, carry their own chips (`×2`, `target 3000 × 2000`,
+  `extra guidance`), and are the one thing in History that reopens the **Upscale**
+  tab instead of Generate — multiplier, target size, guidance, seed and download
+  toggle all come back, along with the image itself when the gallery still has it.
 
 ### What the app remembers
 
@@ -120,34 +215,45 @@ reload and a phone restart:
 
 - **Toggles and run settings** — enhance, turbo, consistency, save-images, steps,
   encoder resolution, megapixels, suggested aspect, aspect ratio, batch, shuffle,
-  prompt refresh. Your last choices come back exactly as they were. The
-  *config.json* defaults in Settings only apply on a first run, or if you clear
-  site data.
+  prompt refresh, and on the Upscale tab the multiplier, the target-size switch,
+  both target dimensions and the download toggle. Your last choices come back
+  exactly as they were. The *config.json* defaults in Settings only apply on a first
+  run, or if you clear site data.
 - **Which gallery jobs are folded** away.
-- **Not remembered on purpose:** the prompt text (that is History's job) and the
-  reference images (they point at one-shot upload handles that a later session
-  may no longer have).
+- **Not remembered on purpose:** the prompt text (that is History's job), the
+  **postprompt**, the reference images (they point at one-shot upload handles
+  that a later session may no longer have), the **seed** and the **guidance
+  prompt** — a pinned seed that silently survived a reload would re-use itself on
+  your next unrelated prompt, and a postprompt or a sentence of guidance is text
+  you would rather write each time. History brings them all back when you tap an
+  entry, because that is an explicit "run this again".
 
 The prompt box grows and shrinks to fit what you typed, capped at roughly half
-the screen so a wall of text cannot push everything else off the page.
+the screen so a wall of text cannot push everything else off the page. The
+postprompt box does the same, half as tall to start with.
 
-Pressing Generate clears the prompt **and any reference images** you attached.
-References belong to the prompt you just submitted — leaving them armed would
-quietly turn the next, unrelated prompt into an image-to-image job.
+Pressing Generate clears the prompt, the **postprompt** and any reference images
+you attached. All three belong to the prompt you just submitted — leaving them
+armed would quietly append yesterday's tail, or turn the next unrelated prompt
+into an image-to-image job.
 
 **Settings** tab covers the ComfyUI host, the download folder, the filename
-template, and every node binding. **Check bindings** validates all of them against
-the workflow at once, and every row shows its own verdict — a broken one is marked
-`✗` with the reason, never a tick. That matters because a stale node id used to
-fail silently: writing `43` after that node was renamed did nothing at all, and the
-symptom was a raw prompt where an enhanced one should have been. Now three things
+template, and every node binding. A **Generate / Upscale** switch above the
+binding table picks which set you are editing and which graph **check bindings**
+and the node list read, so the two never get mixed up. **Check bindings**
+validates all of them against the workflow at once, and every row shows its own
+verdict — a broken one is marked `✗` with the reason, never a tick. That matters
+because a stale node id used to fail silently: writing `43` after that node was renamed did nothing at all, and
+the symptom was a raw prompt where an enhanced one should have been. Now three things
 stop that:
 
-- Generate refuses to start when any binding is broken, naming the node.
+- Generate and Upscale each refuse to start when any of *their* bindings is
+  broken, naming the node. A broken upscale binding does not block a generate.
 - A binding still holding an *old untouched default* is re-pointed at startup and
   saved, so an upgraded app never keeps writing into a node that moved.
-- **Reset to defaults** puts every binding back to what this build ships with, and
-  reports anything the defaults themselves cannot fit.
+- **Reset to defaults** puts every binding back to what this build ships with, for
+  the set you are looking at, and reports anything the defaults themselves cannot
+  fit.
 
 A binding you edited by hand is never rewritten — if you know what you are doing,
 the app keeps out of the way. The one shape that does get migrated is a *half*
@@ -159,15 +265,22 @@ that and the untouched old default are listed in `BINDING_MIGRATIONS` in
 
 ### Queueing
 
-The Generate tab is never locked. Submit as many prompts as you like while a
-generation is running — each one joins an in-app queue and starts as soon as the
-previous job finishes. Only one job reaches ComfyUI at a time, which is all the
-workflow can take anyway.
+Neither tab is ever locked. Submit as many prompts or upscales as you like while a
+job is running — each one joins an in-app queue and starts as soon as the previous
+job finishes. Only one job reaches ComfyUI at a time, which is all the hardware can
+take anyway.
+
+**There is one queue for both tabs**, because ComfyUI has one GPU and one queue.
+An upscale added behind a shuffle waits for the same slot and is visible in the same
+strip, and the strip, the detail panel and everything below it sit under whichever
+tab you are on — you can start a batch on Generate, switch to Upscale, and watch
+the same progress without losing your place.
 
 Above the Generate button a queue strip shows everything in flight:
 
 - `▶` with a progress bar — the job ComfyUI is chewing on right now.
-- `⏳ queued 2 of 3` — waiting its turn, with a `×` to drop it.
+- `⏳ queued 2 of 3` — waiting its turn, with a `×` to drop it. Upscale rows are
+  prefixed `⤒`.
 - `✓ done · 6 img` — the most recent finished job that isn't the one on screen.
   **Tap its prompt to bring that job's results up.**
 
@@ -277,19 +390,27 @@ there is no save button anywhere. Tapping a thumbnail opens the **lightbox**:
 
 - Full-screen, with the image centred on black and given the full screen width —
   the pager buttons live in the bottom bar, not in side gutters.
-- **Pinch to zoom**, drag to pan, double-tap to jump between fit and a 2.5×
-  close look. On a desktop, the mouse wheel zooms toward the cursor.
+- **Pinch to zoom** towards the point between your fingers, drag to pan,
+  double-tap to jump between fit and a 2.5× close look. On a desktop, the mouse
+  wheel zooms toward the cursor.
 - `‹ 3 / 24 ›` in the bottom bar, a swipe, or the arrow keys step through the
   whole list without closing.
 - The file's own name is pinned to the top of the screen, so you know which
   download you are looking at.
 - `⟳ add to prompt` sends the current image to the next free reference slot.
+- `⤒ upscale this` opens the Upscale tab with the image you are looking at already
+  in it, which is the usual way to check an upscale against its source.
 - **The phone's back gesture closes the lightbox** instead of leaving the page —
   one press gets you out of the image, a second press leaves the app.
 
 Zoom is contained inside the image area: the photo is clipped rather than allowed
 to grow over the controls, so the bottom bar and the arrows stay tappable at any
 zoom level.
+
+Pinch and wheel zoom both hold the point you are looking at still, so the image
+grows *towards* your fingers (or the cursor) even when it is already zoomed and
+panned — see `public/zoommath.js` for the one-line formula and `test/zoommath.test.js`
+for why it is easy to get wrong.
 
 ---
 
@@ -303,6 +424,7 @@ Settings without touching code.
 |---|---|---|
 | `promptEnhanced` | `41.value` | Input Prompt |
 | `promptRaw` | `44.value` | Raw Prompt (If Enhance Disabled) |
+| `postprompt` | `256.value` | Postprompt |
 | `enhanceSwitch` | `176.cond` | Prompt Enhance On/Off |
 | `imageCount` | `158.value` | Image Count |
 | `images` | `11` / `140` / `141` / `142` `.image` | Reference 1–4 |
@@ -319,11 +441,37 @@ Settings without touching code.
 Set a node id to blank to disable that feature; it is then never written to the
 payload.
 
+### The upscale bindings
+
+The Upscale tab has its own set, in `upscaleBindings`, checked against
+`upscale_api.json` (`upscaleWorkflowFile` names the file). Settings has a
+**Generate / Upscale** switch above the binding table that switches which set you
+are editing and which graph the checks and the node list read, and
+**replace upscale_api.json** uploads a new copy of the upscale graph.
+
+| Binding | Default | Title |
+|---|---|---|
+| `image` | `538.image` | Image To Upscale |
+| `scale` | `517.value` | Scale Multiplier |
+| `scaleToDim` | `526.value` | Scale To Dim |
+| `scaleToDimHeight` | `530.switch` | If/Else Switch — see the note above |
+| `targetWidth` | `528.value` | Target Width |
+| `targetHeight` | `529.value` | Target Height |
+| `guidance` | `544.value` | Guidance Prompt |
+| `seed` | `536.seed` | Seed |
+
+The two maps are independent in every direction: `POST /api/config/validate` and
+`POST /api/config/bindings/reset` take a `{"kind": "upscale"}` body to point at
+the other one, and a stale name dropped from one map is reported only in that
+map's `staleBindings`.
+
 ### The prompt the image was actually made from
 
 The workflow writes a text file from node `181` "Save Text", which sits on the
-same wire as the text encoder. The server reads it back after every run and
-stores it with the history entry, so you can see the enhancer's wording:
+same wire as the text encoder — both read node `257`, the concatenation of the
+enhance branch's output with your **postprompt**. The server reads the file back
+after every run and stores it with the history entry, so you can see exactly what
+the model was given, postprompt included:
 
 - History tab → **▾ show** opens the box for the whole prompt. Inside it there is
   **one collapsible per run**, because a single prompt can legitimately come back
@@ -526,20 +674,26 @@ was fine.
 npm test      # node --test "test/**/*.test.js"
 ```
 
-Tests cover config merging and the binding/value migrations, payload construction,
-the run matrix, prompt-text capture, download naming, upload sniffing and
-multipart parsing, the history store, the bindings panel's verdict rendering, the
-queue — bulk submit, an auto-paused queue, offline building, resume, cancel, and
-the run-timer start — the download-retry sweep, the run-timer format, and the shut
-down route. 158 of them; they need no network
-and no real ComfyUI (`test/queue.test.js`, `test/retry.test.js` and
-`test/shutdown.test.js` each run a fake ComfyUI from the shared
+Tests cover config merging and the binding/value migrations, payload construction
+for **both** graphs, the run matrix, prompt-text capture, download naming, upload
+sniffing and multipart parsing, the history store, the bindings panel's verdict
+rendering, the page's own wiring — every id it reaches for exists in `index.html`
+and every API path it calls is registered in `server.js` — the queue — bulk submit,
+an auto-paused queue, offline building, resume, cancel, the run-timer start, a
+pinned seed, a postprompt written verbatim and recorded on the row, and an upscale
+job sharing the queue with a generate — the Upscale tab's HTTP
+surface end to end, the download-retry sweep, the run-timer format, focal-point
+zoom math, and the shut down route. 211 of them; they need no network and no real
+ComfyUI (`test/queue.test.js`, `test/retry.test.js`, `test/shutdown.test.js` and
+`test/upscale.test.js` each run a fake ComfyUI from the shared
 `test/helpers/fakeComfy.js`). Every temp root a test creates is deleted again, so
 running the suite on the phone does not leave litter behind.
 
 `test/reset.test.js` starts a second server on port 3082, `test/shutdown.test.js`
-on 3083, each with `MOBILE_CFY_ROOT` pointed at a temp directory, so they never
-touch the instance you are using.
+on 3083 and `test/upscale.test.js` on 3084, each with `MOBILE_CFY_ROOT` pointed at
+a temp directory, so they never touch the instance you are using. That temp root
+has no `public/` in it on purpose: it proves the web page is served from the app
+and not from wherever the data happens to live.
 
 The server runs unchanged on Windows for development:
 
@@ -553,11 +707,15 @@ node server.js
 server.js          http server, router, static files
 start.sh stop.sh   Termux launcher
 config.json        generated; all node ids and paths
-workflow_api.json  the ComfyUI workflow, API format
+workflow_api.json  the ComfyUI workflow, API format (generate)
+upscale_api.json   the ComfyUI workflow, API format (upscale)
 lib/               config, comfy, ws, payload, runner, download, gallery,
                    history, uploads, multipart, env, retry, shutdown
-public/            index.html, app.js, style.css, bindmark.js, durfmt.js
-                   (no build step)
+public/            index.html, app.js, style.css, bindmark.js, durfmt.js,
+                   zoommath.js   (no build step)
+                   durfmt.js and zoommath.js are browser-side pure functions,
+                   pulled out of app.js because the browser parts of app.js are
+                   not unit-testable (see PLAN.md)
 test/              node --test  (helpers/fakeComfy.js is the shared fake server)
 data/
   history.json     prompt memory (300 newest)
