@@ -160,6 +160,25 @@ test('the tabs list every section that is reachable', () => {
   }
 });
 
+test('the page asks for the real icon, and the file is where the link points', () => {
+  // The link and the file are two halves of one promise: a href to a file that
+  // does not exist 404s quietly (the tab keeps a generic glyph) and nobody
+  // notices until a phone installs a shortcut with the wrong picture. The old
+  // emoji data-URI favicon is gone on purpose - the user shipped a real icon.
+  const iconLinks = [...liveHtml.matchAll(/<link rel="(?:icon|apple-touch-icon)" href="([^"]+)"/g)]
+    .map((m) => m[1]);
+  assert.ok(iconLinks.length >= 1, 'the page declares an icon at all');
+  for (const href of iconLinks) {
+    assert.equal(href, '/icon.png', 'the icon is a real path the static server can serve');
+  }
+  assert.equal(fs.existsSync(path.join(ROOT, 'public', 'icon.png')), true,
+    'public/icon.png exists - serveStatic resolves /icon.png against public/');
+  assert.match(liveHtml, /<link rel="icon" href="\/icon\.png" type="image\/png">/,
+    'the type is declared so the browser does not sniff it');
+  // No leftover of the previous inline-SVG favicon.
+  assert.doesNotMatch(html, /data:image\/svg/);
+});
+
 test('the bindings card offers all three graphs, each wired end to end', () => {
   // Three workflows means three rows of Settings: the select picks the kind,
   // app.js maps kind -> map, workflow route, stale report and upload input, and

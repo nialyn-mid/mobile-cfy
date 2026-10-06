@@ -959,8 +959,11 @@ workflow_api_enhanceless.json  same graph, enhancer deleted (generate, enhance o
 upscale_api.json   the ComfyUI workflow, API format (upscale)
 lib/               config, comfy, ws, payload, runner, download, gallery,
                    history, queuedb, uploads, multipart, env, retry, shutdown
-public/            index.html, app.js, style.css, bindmark.js, durfmt.js,
-                   zoommath.js, upmath.js   (no build step)
+public/            index.html, app.js, style.css, icon.png, bindmark.js,
+                   durfmt.js, zoommath.js, upmath.js   (no build step)
+                   icon.png is the favicon (and the apple-touch-icon); it is served
+                   as /icon.png by the static handler, and test/ui.test.js checks
+                   the page still asks for it and the file is still there
                    durfmt.js, zoommath.js and upmath.js are browser-side pure functions,
                    pulled out of app.js because the browser parts of app.js are
                    not unit-testable (see PLAN.md)
