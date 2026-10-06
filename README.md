@@ -21,9 +21,12 @@ termux-setup-storage      # once, so ~/storage/downloads exists
 bash start.sh
 ```
 
-`start.sh` starts the server, waits for it to answer, and opens
-`http://127.0.0.1:3081` in the Termux browser. It also prints the phone's LAN
-address so you can open the same page from a desktop on the same wifi.
+`start.sh` starts the server, waits for it to answer, and prints the URL. It does
+**not** open a browser on its own — `bash start.sh --open` does that, when you
+want it. (Opening on every start threw the Termux session behind a page nobody
+had asked for yet, which on a phone means losing sight of the log the server is
+writing into at the moment you start it.) It also prints the phone's LAN address
+so you can open the same page from a desktop on the same wifi.
 
 Stop it with `Ctrl-C`, or `bash stop.sh` if it is running in the background.
 
@@ -57,8 +60,8 @@ ComfyUI you must restart ComfyUI, copy the new hash from its console, then press
 
 | Control | What it does |
 |---|---|
-| Prompt | Goes to node `41` (Input Prompt) with enhance on, or node `44` (Raw Prompt) when enhance is off |
-| Postprompt | Node `256`. Optional extra text joined onto the prompt by the workflow — see below |
+| Prompt | Node `41` (Input Prompt) when enhance is on, node `44` (Raw Prompt) when it is off |
+| Postprompt | Node `256`. Optional extra text joined onto the prompt by the workflow — see below. Enhance off runs a different file with no `256`, so it is **not applied** then (the hint under the toggle says so) |
 | Prompt enhance | Node `176` (`cond`). Works with reference images attached too — the enhancer reads them itself |
 | Consistency LoRA | Node `207`. On (the default) = through the LoRA, off = the plain model |
 | Turbo | Node `147`, which already selects the turbo or full GGUF (`148` / `183`) for you |
@@ -69,7 +72,7 @@ ComfyUI you must restart ComfyUI, copy the new hash from its console, then press
 | Aspect ratio | Node `9`'s `aspect_ratio` combo. Shown when suggested aspect is off. One of the eight the node offers: 1:1, 2:3, 3:2, 3:4, 4:3, 9:16, 16:9, 21:9 |
 | Batch × Shuffle | `batch × shuffle` sequential runs |
 | Seed | Blank = a fresh random seed for every run. A number pins it — see below |
-| Prompt refresh | When the override switch (node `68`) fires — see below |
+| Prompt refresh | When the override switch (node `68`) fires — see below. Enhance off runs the enhanceless file, which has no `68`, so it does not apply then |
 | Reference images | Up to 4, uploaded to ComfyUI's input dir before the run |
 
 Pressing **Generate** clears the prompt box and lets go of the keyboard, on
@@ -85,8 +88,9 @@ Node `257` in the workflow joins node `256` (your postprompt) onto whichever tex
 the enhance branch produced, with **no delimiter**, and the joined string is what
 both the text encoder and the SaveText node read. So:
 
-- It is applied *after* enhancement, on both paths — turning the enhancer off does
-  not bypass it.
+- It is applied *after* enhancement — on the enhance-on path. When the enhancer
+  is off the job runs `workflow_api_enhanceless.json` instead, which has no
+  postprompt node at all, so nothing is applied then and the field is ignored.
 - It is joined **literally**. A postprompt of `\n\nas a pencil sketch` becomes
   `…your prompt\n\nas a pencil sketch`; without your newlines it would be glued
   onto the last word. Nothing is trimmed on the way in.
@@ -97,9 +101,11 @@ both the text encoder and the SaveText node read. So:
   ComfyUI editor, exactly as for every other optional field.
 
 > **A broken binding will not run silently.** Every binding is checked against
-> `workflow_api.json` before a job is accepted; if one points at a node that is
-> gone, Generate refuses with the exact reason ("node 43 is not in the
-> workflow") instead of quietly producing something you did not ask for.
+> its own workflow file before a job is accepted — `workflow_api.json` for
+> enhance-on runs, `workflow_api_enhanceless.json` for enhance-off runs,
+> `upscale_api.json` for upscales; if one points at a node that is gone, the
+> button refuses with the exact reason ("node 43 is not in the workflow")
+> instead of quietly producing something you did not ask for.
 
 **Seed** is the reproducibility dial. Left blank, every run rolls a fresh random
 seed (what the app has always done — there is no seed for you to see or lose).
@@ -410,7 +416,9 @@ four of the five are not outages:
 
 `GET /api/health` returns the same report as `comfy: {host, port, state, error,
 hint, problem, checkedAt}` — so `curl -s http://127.0.0.1:3081/api/health` in
-Termux shows the same lines the card does, without touching the browser.
+Termux shows the same lines the card does, without touching the browser. It also
+carries `shutdown: {allowed, because, error}`: whether *this* caller may stop the
+server, and why not if it may not.
 
 ### Walking off the network
 
@@ -508,12 +516,18 @@ When it does confirm, the screen explains that ComfyUI is still going and that
 moment it does.
 
 The button only works when the page was served **from the phone**
-(`http://127.0.0.1:<port>`). The UI is reachable from every device on the wifi, and
-a tap from a laptop should not kill the phone's server; from another device it
-answers with a 403 and the UI explains why. `MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN=1`
-in the environment lifts that if you want a remote button.
+(`http://127.0.0.1:<port>`, or the phone's own wifi address). The UI is reachable
+from every device on the wifi, and a tap from a laptop should not kill the phone's
+server. When the page is somewhere else, the card says so **before you press
+anything** — `GET /api/health` carries the server's own verdict, so an orange
+line appears under the button naming the address it is refusing — and if you press
+it anyway the dialog stays open with the reason in it, rather than closing and
+showing a toast that is gone before you have read it. `MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN=1`
+in the environment lifts the restriction if you want a remote button.
 
-Endpoint: `POST /api/shutdown` with an optional `{"handover":true}`.
+Endpoint: `POST /api/shutdown` with an optional `{"handover":true}`. A refusal is
+`403` with the same `{allowed, because, error}` verdict as the health poll, so the
+page can print the server's words instead of guessing at them.
 
 ### Viewing images
 
@@ -577,8 +591,8 @@ payload.
 
 The Upscale tab has its own set, in `upscaleBindings`, checked against
 `upscale_api.json` (`upscaleWorkflowFile` names the file). Settings has a
-**Generate / Upscale** switch above the binding table that switches which set you
-are editing and which graph the checks and the node list read, and
+**Generate / Enhanceless / Upscale** switch above the binding table that switches
+which set you are editing and which graph the checks and the node list read, and
 **replace upscale_api.json** uploads a new copy of the upscale graph.
 
 | Binding | Default | Title |
@@ -593,10 +607,59 @@ are editing and which graph the checks and the node list read, and
 | `batch` | `506.batch_size` | Text Encode Qwen Image 2.1 (List) |
 | `seed` | `536.seed` | Seed |
 
-The two maps are independent in every direction: `POST /api/config/validate` and
-`POST /api/config/bindings/reset` take a `{"kind": "upscale"}` body to point at
-the other one, and a stale name dropped from one map is reported only in that
-map's `staleBindings`.
+The maps are independent in every direction: `POST /api/config/validate` and
+`POST /api/config/bindings/reset` take a `{"kind": "generate" | "enhanceless" |
+"upscale"}` body to point at another one, and a stale name dropped from one map
+is reported only in that map's report key (`staleBindings`,
+`staleEnhancelessBindings`, `staleUpscaleBindings`).
+
+### The enhanceless bindings
+
+Turning **Prompt enhance** off does not just flip node `176` — the job runs a
+*different file*, `workflow_api_enhanceless.json` (`enhancelessWorkflowFile`),
+which is the generate graph with the enhancer deleted out of it. That is the
+performance point: no enhancer pass, so the run goes straight to the text
+encoder and the samplers.
+
+Because it is a separate export, its node ids are only *coincidentally* the same
+as the normal workflow's, and a future edit to either file can desync them. So it
+gets its own map, `enhancelessBindings`, and its own Settings row behind the
+three-way switch. It declares only what that file actually has:
+
+| Binding | Default | Title |
+|---|---|---|
+| `promptRaw` | `44.value` | Raw Prompt (If Enhance Disabled) |
+| `imageCount` | `158.value` | Image Count |
+| `turboSwitch` | `147.value` | TURBO On/Off |
+| `stepsTurbo` / `stepsFull` | `149.value` / `150.value` | Turbo Steps / Full Steps |
+| `seed` | `37.seed` | Seed |
+| `megapixels` | `232.value` | Input Megapixels |
+| `aspectRatio` | `9.aspect_ratio` | Resolution Selector |
+| `consistencyLora` | `207.value` | Consistency LoRA |
+| `inputResolution` | `204.value` | Input Resolution |
+| `images` | `11` / `140` / `141` / `142` `.image` | Reference 1–4 |
+
+`promptEnhanced`, `enhanceSwitch`, `postprompt`, `shuffleSwitch` and
+`useSuggestedAspect` are deliberately absent: their nodes are not in that graph,
+and a binding pointing at a missing node would fail validation on every
+enhance-off run. A binding the run never reads is simply not written (blank
+behaves the same way), which is why absence *is* the disable switch here.
+
+The flag picks all three answers at once — the file, the map and the pre-flight
+check — so `POST /api/generate` guards `enhancelessBindings` against
+`workflow_api_enhanceless.json` when `promptEnhance` is `false`, and the normal
+map against `workflow_api.json` when it is not. A broken enhanceless row refuses
+enhance-off runs only; enhance-on runs are unaffected, and vice versa.
+
+One thing stays true on the *normal* path: the payload still writes
+`enhanceSwitch` = on whatever the exported file says, because an exporter that
+last ran with the toggle off ships `176.cond` = `false` and would otherwise
+quietly bypass the enhancer on every "enhanced" run. (The shipped
+`workflow_api.json` is exactly that.)
+
+`GET`/`PUT /api/enhanceless/workflow` reads and replaces that file without
+touching the other two, and **replace workflow_api_enhanceless.json** in
+Settings uploads a new copy.
 
 ### The prompt the image was actually made from
 
@@ -617,9 +680,12 @@ the model was given, postprompt included:
   2–5 minutes per image to redraw wording you already like.
 - The tags say **enhanced prompt** or **raw prompt (enhancer bypassed)**. The tag
   is decided by your toggle, not by guessing: enhance on means the enhancer ran,
-  enhance off means node `176` handed your text straight through. If you ever see
-  *raw* with enhance on, the binding is broken — Generate will have refused to
-  start, so check the Settings tab.
+  enhance off means the prompt went in as typed — via node `44` directly, since
+  the enhanceless file has no switch to hand it through. If you ever see *raw*
+  with enhance on, the binding is broken — Generate will have refused to start,
+  so check the Settings tab. (Enhanceless runs have no SaveText node either, so
+  they capture nothing — any *raw*-tagged capture in History is from before that
+  workflow existed.)
 - Captures accumulate. Re-running a remembered prompt adds its new wording(s)
   alongside the old ones rather than replacing them, so a good result never
   disappears because you tried the prompt again.
@@ -812,11 +878,15 @@ the budget ran out or ComfyUI no longer has the file (ComfyUI prunes its output
 folder — a `gone` image may only exist in this app's gallery from now on). See
 *When a download fails*.
 
-**The shut down button does nothing.** The button only works when the page is
-served *from the phone itself* (`http://127.0.0.1:<port>`), because the UI is
-reachable from every device on the wifi and a tap from a laptop should not kill
-the phone's server. Open the UI on the phone. If you genuinely want a remote
-button, start the server with `MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN=1`.
+**The shut down button does nothing.** It only works when the page is served *from
+the phone itself* (`http://127.0.0.1:<port>`), because the UI is reachable from
+every device on the wifi and a tap from a laptop should not kill the phone's
+server. Open the UI on the phone — `bash start.sh` prints the loopback address and
+does not open a browser on its own any more. If you genuinely want a remote button,
+start the server with `MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN=1`.
+
+If the button was pressed from the wrong device the Settings card says so, in
+orange, the moment the page loads — you do not have to press it to find out.
 
 **The page says "still checking" after a stop.** It is polling `/api/health`
 until the connection is refused, which is the only proof that the process is gone.
@@ -833,28 +903,41 @@ npm test      # node --test "test/**/*.test.js"
 ```
 
 Tests cover config merging and the binding/value migrations, payload construction
-for **both** graphs, the run matrix, prompt-text capture, download naming, upload
+for **all three** graphs (including that enhance-off runs write node `44` in the
+enhanceless file, that the enhanceless map declares nothing that file lacks, and
+that the normal path forces `176.cond` on whatever the export says), the run
+matrix, prompt-text capture, download naming, upload
 sniffing and multipart parsing, the history store, the bindings panel's verdict
 rendering, the page's own wiring — every id it reaches for exists in `index.html`
-and every API path it calls is registered in `server.js` — the queue — bulk submit,
+and every API path it calls is registered in `server.js` — and the page BOOTING
+itself against a stub DOM (`test/boot.test.js` runs `app.js` the way a browser
+would, so a single bad element reference at module scope can never again silently
+kill the lightbox's swipe and pinch handlers or the shutdown wiring) — the queue — bulk submit,
 an auto-paused queue, offline building, resume, cancel, the run-timer start, a
 pinned seed, a postprompt written verbatim and recorded on the row, and an upscale
 job sharing the queue with a generate — the Upscale tab's HTTP
-surface end to end (including a batch of 4 landing in node 506 as one prompt),
+surface end to end (including a batch of 4 landing in node 506 as one prompt) —
+the enhanceless HTTP surface (each flag refusing runs against its OWN binding
+map, and an enhance-off run arriving at ComfyUI as the enhanceless graph),
 the download-retry sweep, the run-timer format, focal-point
 zoom math, the hold for somebody else's work in ComfyUI's queue, every health
 answer (no answer, a slow answer, a login page, a refusal, a nonsense address),
 the queue surviving a killed process, the arithmetic the Upscale tab prints
 under the picture (including a check that it still matches the workflow it
 transcribes), and the shut down
-route. 264 of them; they need no network and no real
+route — including that a page which may not press the button is told so before it
+presses it, and the three-workflow split (the enhanceless file, its own binding
+map, one flag picking file + map + pre-flight together). 282 of them; they need
+no network and no real
 ComfyUI (`test/queue.test.js`, `test/retry.test.js`, `test/shutdown.test.js`,
-`test/upscale.test.js` and `test/persist.test.js` each run a fake ComfyUI from
+`test/upscale.test.js`, `test/enhanceless.test.js` and `test/persist.test.js`
+each run a fake ComfyUI from
 the shared `test/helpers/fakeComfy.js`). Every temp root a test creates is
 deleted again, so running the suite on the phone does not leave litter behind.
 
 `test/reset.test.js` starts a second server on port 3082, `test/shutdown.test.js`
-on 3083 and `test/upscale.test.js` on 3084, each with `MOBILE_CFY_ROOT` pointed at
+on 3083, `test/upscale.test.js` on 3084 and `test/enhanceless.test.js` on 3085,
+each with `MOBILE_CFY_ROOT` pointed at
 a temp directory, so they never touch the instance you are using. That temp root
 has no `public/` in it on purpose: it proves the web page is served from the app
 and not from wherever the data happens to live.
@@ -872,6 +955,7 @@ server.js          http server, router, static files
 start.sh stop.sh   Termux launcher
 config.json        generated; all node ids and paths
 workflow_api.json  the ComfyUI workflow, API format (generate)
+workflow_api_enhanceless.json  same graph, enhancer deleted (generate, enhance off)
 upscale_api.json   the ComfyUI workflow, API format (upscale)
 lib/               config, comfy, ws, payload, runner, download, gallery,
                    history, queuedb, uploads, multipart, env, retry, shutdown

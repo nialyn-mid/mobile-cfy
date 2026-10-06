@@ -153,7 +153,7 @@
       ],
       "return_with_leftover_noise": "enable",
       "model": [
-        "129",
+        "224",
         0
       ],
       "positive": [
@@ -210,7 +210,7 @@
         0
       ],
       "latent_image": [
-        "214",
+        "18",
         0
       ]
     },
@@ -372,25 +372,16 @@
   },
   "37": {
     "inputs": {
-      "seed": 699651588207345
+      "seed": 555376514080655
     },
     "class_type": "SeedNode",
     "_meta": {
       "title": "Seed"
     }
   },
-  "41": {
-    "inputs": {
-      "value": "2 anime girls"
-    },
-    "class_type": "PrimitiveStringMultiline",
-    "_meta": {
-      "title": "Input Prompt"
-    }
-  },
   "44": {
     "inputs": {
-      "value": "anime girl"
+      "value": "anime style illustration of a girl"
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
@@ -410,125 +401,10 @@
       "title": "Save Image"
     }
   },
-  "56": {
-    "inputs": {
-      "string_a": [
-        "41",
-        0
-      ],
-      "string_b": [
-        "108",
-        0
-      ],
-      "mode": "Equal",
-      "case_sensitive": true
-    },
-    "class_type": "StringCompare",
-    "_meta": {
-      "title": "Compare Text"
-    }
-  },
-  "58": {
-    "inputs": {
-      "string_a": [
-        "238",
-        0
-      ],
-      "string_b": [
-        "62",
-        0
-      ],
-      "mode": "Equal",
-      "case_sensitive": true
-    },
-    "class_type": "StringCompare",
-    "_meta": {
-      "title": "Compare Text"
-    }
-  },
-  "59": {
-    "inputs": {
-      "switch": [
-        "58",
-        0
-      ],
-      "on_false": [
-        "238",
-        0
-      ],
-      "on_true": [
-        "41",
-        0
-      ]
-    },
-    "class_type": "ComfySwitchNode",
-    "_meta": {
-      "title": "If/Else Switch"
-    }
-  },
-  "62": {
-    "inputs": {
-      "value": ""
-    },
-    "class_type": "PrimitiveString",
-    "_meta": {
-      "title": "Text"
-    }
-  },
-  "64": {
-    "inputs": {
-      "loop_id": "Input-Prompt",
-      "to_memory": [
-        "41",
-        0
-      ]
-    },
-    "class_type": "MemorizeString",
-    "_meta": {
-      "title": "Memorize String"
-    }
-  },
-  "67": {
-    "inputs": {
-      "values.value0": [
-        "68",
-        0
-      ],
-      "values.value1": [
-        "69",
-        0
-      ]
-    },
-    "class_type": "ComfyOrNode",
-    "_meta": {
-      "title": "OR: If Either, Refresh"
-    }
-  },
-  "68": {
-    "inputs": {
-      "value": false
-    },
-    "class_type": "PrimitiveBoolean",
-    "_meta": {
-      "title": "ON = Override = Refresh"
-    }
-  },
-  "69": {
-    "inputs": {
-      "value": [
-        "56",
-        0
-      ]
-    },
-    "class_type": "ComfyNotNode",
-    "_meta": {
-      "title": "Not Equal, So Refresh"
-    }
-  },
   "73": {
     "inputs": {
       "string_a": [
-        "257",
+        "44",
         0
       ],
       "string_b": [
@@ -709,74 +585,6 @@
       "title": "Int Math"
     }
   },
-  "108": {
-    "inputs": {
-      "loop_id": "Input-Prompt",
-      "fallback": ""
-    },
-    "class_type": "RecallString",
-    "_meta": {
-      "title": "Recall String"
-    }
-  },
-  "125": {
-    "inputs": {
-      "filename_prefix": "latent-mid/qwen-image-2.1",
-      "samples": [
-        "18",
-        0
-      ]
-    },
-    "class_type": "SaveLatent",
-    "_meta": {
-      "title": "Save Latent"
-    }
-  },
-  "126": {
-    "inputs": {
-      "latent": "qwen-image-2.1_00002_.latent"
-    },
-    "class_type": "LoadLatent",
-    "_meta": {
-      "title": "Load Latent"
-    }
-  },
-  "128": {
-    "inputs": {
-      "value": false
-    },
-    "class_type": "PrimitiveBoolean",
-    "_meta": {
-      "title": "Recall Latent"
-    }
-  },
-  "129": {
-    "inputs": {
-      "cond": [
-        "128",
-        0
-      ],
-      "tt_value": [
-        "130",
-        0
-      ],
-      "ff_value": [
-        "224",
-        0
-      ]
-    },
-    "class_type": "ImpactConditionalBranch",
-    "_meta": {
-      "title": "ImpactConditionalBranch"
-    }
-  },
-  "130": {
-    "inputs": {},
-    "class_type": "ImpactDummyInput",
-    "_meta": {
-      "title": "ImpactDummyInput"
-    }
-  },
   "137": {
     "inputs": {
       "switch": [
@@ -930,7 +738,7 @@
   },
   "158": {
     "inputs": {
-      "value": 1
+      "value": 0
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -1155,51 +963,6 @@
       "title": "If/Else Switch"
     }
   },
-  "176": {
-    "inputs": {
-      "cond": false,
-      "tt_value": [
-        "59",
-        0
-      ],
-      "ff_value": [
-        "44",
-        0
-      ]
-    },
-    "class_type": "ImpactConditionalBranch",
-    "_meta": {
-      "title": "Prompt Enhance On/Off"
-    }
-  },
-  "179": {
-    "inputs": {
-      "operation": "addition",
-      "int_1": [
-        "248",
-        0
-      ],
-      "int_2": 1
-    },
-    "class_type": "CyclistMathInt",
-    "_meta": {
-      "title": "Int Math"
-    }
-  },
-  "181": {
-    "inputs": {
-      "filename_prefix": "enhanced/prompt",
-      "format": "txt",
-      "text": [
-        "257",
-        0
-      ]
-    },
-    "class_type": "SaveText",
-    "_meta": {
-      "title": "Save Text"
-    }
-  },
   "183": {
     "inputs": {
       "unet_name": "qwen-image-2.1-UC-Q4_K_M.gguf"
@@ -1294,58 +1057,11 @@
   },
   "207": {
     "inputs": {
-      "value": true
+      "value": false
     },
     "class_type": "PrimitiveBoolean",
     "_meta": {
       "title": "Consistency LoRA"
-    }
-  },
-  "211": {
-    "inputs": {
-      "operation": "addition",
-      "int_1": [
-        "212",
-        0
-      ],
-      "int_2": 1
-    },
-    "class_type": "CyclistMathInt",
-    "_meta": {
-      "title": "Int Math"
-    }
-  },
-  "212": {
-    "inputs": {
-      "input1": [
-        "128",
-        0
-      ]
-    },
-    "class_type": "ConvertAny2Int",
-    "_meta": {
-      "title": "Convert to Int"
-    }
-  },
-  "214": {
-    "inputs": {
-      "select": [
-        "211",
-        0
-      ],
-      "sel_mode": false,
-      "input1": [
-        "18",
-        0
-      ],
-      "input2": [
-        "126",
-        0
-      ]
-    },
-    "class_type": "ImpactSwitch",
-    "_meta": {
-      "title": "Switch (Any)"
     }
   },
   "218": {
@@ -1433,91 +1149,10 @@
       "title": "Compatibility Forwarder"
     }
   },
-  "226": {
-    "inputs": {
-      "Prompt": [
-        "41",
-        0
-      ],
-      "Task": "Auto (by images)",
-      "Seed": [
-        "37",
-        0
-      ],
-      "Use Cache": true,
-      "Target Megapixels": [
-        "232",
-        0
-      ],
-      "Aspect Ratio": "Auto (model decides)",
-      "Prompt Count": 1,
-      "Output Language": "Auto (official)",
-      "Prompt Enhancement": true,
-      "pe_model": [
-        "227",
-        0
-      ],
-      "pe_settings": [
-        "228",
-        0
-      ],
-      "Image 1": [
-        "13",
-        0
-      ],
-      "Image 2": [
-        "137",
-        0
-      ],
-      "Image 3": [
-        "138",
-        0
-      ],
-      "Image 4": [
-        "139",
-        0
-      ]
-    },
-    "class_type": "QwenImage21PromptEnhancer",
-    "_meta": {
-      "title": "Qwen Image 2.1 Prompt Enhancer"
-    }
-  },
-  "227": {
-    "inputs": {
-      "T2I GGUF": "GGUF/pe_t2i_heretic-Q4_K_M.gguf",
-      "I2I GGUF": "Qwen-Image-2.1-I2I-GGUF/Qwen-Image-2.1-PE-I2I-Heretic-Q4_K_M.gguf",
-      "Vision Model": "Qwen-Image-2.1-I2I-GGUF/Qwen-Image-2.1-PE-I2I.mmproj-bf16 (1).gguf",
-      "GPU Offload Layers": -1,
-      "Context Length": "16384",
-      "System Prompt File": "",
-      "Thinking": true,
-      "Unload Model After Generation": true,
-      "Plan Tokens": 800
-    },
-    "class_type": "QwenImage21PELoaderGGUF",
-    "_meta": {
-      "title": "Qwen Image 2.1 PE Loader (GGUF)"
-    }
-  },
-  "228": {
-    "inputs": {
-      "Sampling Preset": "Official defaults",
-      "Temperature": 1,
-      "Top P": 0.95,
-      "Top K": 20,
-      "Presence Penalty": 1.5,
-      "Max New Tokens": 0
-    },
-    "class_type": "QwenImage21PESettings",
-    "_meta": {
-      "title": "Qwen Image 2.1 PE Settings"
-    }
-  },
   "229": {
     "inputs": {
       "prompts": [
-        "257",
+        "44",
         0
       ],
       "negative_prompt": "",
@@ -1589,28 +1224,12 @@
       "title": "Input Megapixels"
     }
   },
-  "233": {
-    "inputs": {
-      "value": false
-    },
-    "class_type": "PrimitiveBoolean",
-    "_meta": {
-      "title": "Use Suggested Aspect"
-    }
-  },
   "234": {
     "inputs": {
-      "switch": [
-        "233",
-        0
-      ],
+      "switch": false,
       "on_false": [
         "9",
         1
-      ],
-      "on_true": [
-        "241",
-        0
       ]
     },
     "class_type": "ComfySwitchNode",
@@ -1620,166 +1239,15 @@
   },
   "235": {
     "inputs": {
-      "switch": [
-        "233",
-        0
-      ],
+      "switch": false,
       "on_false": [
         "9",
-        0
-      ],
-      "on_true": [
-        "240",
         0
       ]
     },
     "class_type": "ComfySwitchNode",
     "_meta": {
       "title": "If/Else Switch"
-    }
-  },
-  "238": {
-    "inputs": {
-      "select": [
-        "179",
-        0
-      ],
-      "sel_mode": false,
-      "input1": [
-        "246",
-        0
-      ],
-      "input2": [
-        "226",
-        0
-      ]
-    },
-    "class_type": "ImpactSwitch",
-    "_meta": {
-      "title": "Switch (Any)"
-    }
-  },
-  "240": {
-    "inputs": {
-      "select": [
-        "179",
-        0
-      ],
-      "sel_mode": false,
-      "input1": [
-        "245",
-        0
-      ],
-      "input2": [
-        "226",
-        4
-      ]
-    },
-    "class_type": "ImpactSwitch",
-    "_meta": {
-      "title": "Switch (Any)"
-    }
-  },
-  "241": {
-    "inputs": {
-      "select": [
-        "179",
-        0
-      ],
-      "sel_mode": false,
-      "input1": [
-        "247",
-        0
-      ],
-      "input2": [
-        "226",
-        5
-      ]
-    },
-    "class_type": "ImpactSwitch",
-    "_meta": {
-      "title": "Switch (Any)"
-    }
-  },
-  "242": {
-    "inputs": {
-      "loop_id": "Last-Width",
-      "to_memory": [
-        "240",
-        0
-      ]
-    },
-    "class_type": "MemorizeInt",
-    "_meta": {
-      "title": "Memorize Int"
-    }
-  },
-  "243": {
-    "inputs": {
-      "loop_id": "Last-Height",
-      "to_memory": [
-        "241",
-        0
-      ]
-    },
-    "class_type": "MemorizeInt",
-    "_meta": {
-      "title": "Memorize Int"
-    }
-  },
-  "244": {
-    "inputs": {
-      "loop_id": "Last-Enhanced-Prompt",
-      "to_memory": [
-        "238",
-        0
-      ]
-    },
-    "class_type": "MemorizeString",
-    "_meta": {
-      "title": "Memorize String"
-    }
-  },
-  "245": {
-    "inputs": {
-      "loop_id": "Last-Width",
-      "fallback": 0
-    },
-    "class_type": "RecallInt",
-    "_meta": {
-      "title": "Recall Int"
-    }
-  },
-  "246": {
-    "inputs": {
-      "loop_id": "Last-Enhanced-Prompt",
-      "fallback": ""
-    },
-    "class_type": "RecallString",
-    "_meta": {
-      "title": "Recall String"
-    }
-  },
-  "247": {
-    "inputs": {
-      "loop_id": "Last-Height",
-      "fallback": 0
-    },
-    "class_type": "RecallInt",
-    "_meta": {
-      "title": "Recall Int"
-    }
-  },
-  "248": {
-    "inputs": {
-      "input1": [
-        "67",
-        0
-      ]
-    },
-    "class_type": "ConvertAny2Int",
-    "_meta": {
-      "title": "Convert to Int"
     }
   },
   "250": {
@@ -1846,32 +1314,6 @@
     "class_type": "PromptEnhancerReleaseTextEncoder",
     "_meta": {
       "title": "Release Text Encoder (VRAM)"
-    }
-  },
-  "256": {
-    "inputs": {
-      "value": "\n"
-    },
-    "class_type": "PrimitiveStringMultiline",
-    "_meta": {
-      "title": "Postprompt"
-    }
-  },
-  "257": {
-    "inputs": {
-      "string_a": [
-        "176",
-        0
-      ],
-      "string_b": [
-        "256",
-        0
-      ],
-      "delimiter": ""
-    },
-    "class_type": "StringConcatenate",
-    "_meta": {
-      "title": "Concatenate Text"
     }
   }
 }

@@ -112,6 +112,76 @@ test('the enhance switch writes node 176 "cond", not the retired node 43', () =>
   assert.equal(WORKFLOW['176']._meta?.title, 'Prompt Enhance On/Off');
 });
 
+// ------------------------------------------------------- the enhanceless graph
+// workflow_api_enhanceless.json is the generate graph with the enhancer deleted
+// out of it; it is what runs whenever the enhance toggle is off, and it gets its
+// own binding map because its ids may drift from the normal file's over time.
+
+const ENHANCELESS = JSON.parse(fs.readFileSync(path.join(ROOT, 'workflow_api_enhanceless.json'), 'utf8'));
+const EB = DEFAULTS.enhancelessBindings;
+
+test('the enhanceless defaults only point at nodes that file really has', () => {
+  for (const [key, binding] of Object.entries(EB)) {
+    const slots = Array.isArray(binding) ? binding : [binding];
+    for (const [i, b] of slots.entries()) {
+      const node = ENHANCELESS[String(b.node)];
+      assert.ok(node, `enhanceless ${key}${slots.length > 1 ? ` #${i + 1}` : ''}: node ${b.node} missing from workflow_api_enhanceless.json`);
+      assert.ok(
+        Object.prototype.hasOwnProperty.call(node.inputs ?? {}, b.input),
+        `enhanceless ${key}: node ${b.node} (${node.class_type}) has no input "${b.input}"`,
+      );
+    }
+  }
+});
+
+test('the enhanceless map leaves out everything its graph deleted', () => {
+  // These features live in nodes 41 / 176 / 256 / 68 / 233, all removed from
+  // the enhanceless export. Declaring them would fail validation on every
+  // enhance-off run ("node 176 is not in the workflow") - and the write path
+  // treats an absent binding as a no-op, so absence IS the disable switch.
+  for (const key of ['promptEnhanced', 'enhanceSwitch', 'postprompt', 'shuffleSwitch', 'useSuggestedAspect']) {
+    assert.equal(key in EB, false, `${key} must not be declared: its node is not in the enhanceless graph`);
+    assert.ok(key in B, `${key} is still declared in the normal map`);
+  }
+  assert.ok('promptRaw' in EB, 'the raw prompt keeps its own row');
+  assert.ok('turboSwitch' in EB, 'as do the knobs both graphs share');
+});
+
+test('an enhance-off run writes node 44 in the enhanceless graph, and asks for nothing it lacks', () => {
+  // postprompt, the refresh switch and the suggested aspect all arrive on the
+  // run object from the same form the enhance-on path uses - none of them has a
+  // node over here, and none of them may throw or write a stray key.
+  const wf = buildRunPayload(ENHANCELESS, EB, {
+    prompt: 'a dog in a park',
+    promptEnhance: false,
+    postprompt: 'at golden hour',
+    refreshOverride: true,
+    useSuggestedAspect: true,
+    turbo: true,
+    stepsOverride: 7,
+    images: [],
+  });
+  assert.equal(wf['44'].inputs.value, 'a dog in a park');
+  assert.equal(wf['147'].inputs.value, true, 'turbo lives in both graphs');
+  assert.equal(wf['149'].inputs.value, 7, 'and so do the step overrides');
+  assert.equal(wf['150'].inputs.value, 7);
+  assert.equal(wf['158'].inputs.value, 0, 'image count, written through the shared map');
+  assert.equal(wf['256'], undefined, 'there is no postprompt node to write');
+  assert.equal(wf['176'], undefined, 'and no enhance switch - picking the file replaced it');
+});
+
+test('the normal workflow forces the enhance switch ON however the file was exported', () => {
+  // An exporter that last ran with the toggle off writes 176.cond=false into
+  // workflow_api.json (the shipped file does exactly that). A payload built from
+  // it with enhance ON must still come out true, or every "enhanced" run silently
+  // bypasses the enhancer while the page promises the opposite.
+  const exported = structuredClone(WORKFLOW);
+  exported['176'].inputs.cond = false;
+  const wf = buildRunPayload(exported, B, { prompt: 'a cat', promptEnhance: true, images: [] });
+  assert.equal(wf['176'].inputs.cond, true, 'the flag decides, not the file');
+  assert.equal(wf['41'].inputs.value, 'a cat');
+});
+
 test('the source workflow is never mutated', () => {
   const before = JSON.stringify(WORKFLOW);
   buildRunPayload(WORKFLOW, B, { prompt: 'x', images: ['a.png'], turbo: true, seed: 7 });

@@ -5,13 +5,28 @@ import { durationBetween } from './durfmt.js';
 import { zoomAboutPoint } from './zoommath.js';
 import { describeUpscaleSize, planUpscaleSize, warnUpscaleSize } from './upmath.js';
 
-const $ = (id) => document.getElementById(id);
+/**
+ * Every lookup in this file goes through `$`.
+ *
+ * A missing id used to come back as `null`, and because this is a module, ONE
+ * uncaught top-level error aborts *everything after it*: commenting a button
+ * out of index.html silently killed the settings tab, the event stream and the
+ * boot sequence - and because the breakage always landed on the same kind of
+ * line, it read as "that button doesn't work" rather than "half this file never
+ * ran". The lightbox lost all four of its pointer handlers that way (swipe and
+ * pinch included) when its close button was commented out.
+ *
+ * So a missing element now resolves to a detached <div>. Every property read
+ * comes back empty, every property write goes nowhere, and a typo in a single
+ * id can never take the rest of the page down with it.
+ */
+const $ = (id) => document.getElementById(id) ?? document.createElement('div');
 
 /**
- * Wiring that survives the markup being edited. A plain `$('x').onclick =`
- * throws when `x` is absent, and because this is a module, one uncaught
- * top-level error aborts *everything after it* - commenting a button out in
- * index.html silently killed the settings tab and the boot sequence.
+ * Thin wrappers over `$` for the four things bound at top level. `$` is total
+ * now, so these say what each line means rather than guarding anything - but
+ * keep using them: they are what a reader greps for when asking "where does
+ * this get wired up?"
  */
 const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
 const setDisabled = (id, v) => { const el = $(id); if (el) el.disabled = v; };
@@ -29,6 +44,9 @@ const api = async (path, opts = {}) => {
     const e = new Error(body?.error || `${res.status} ${res.statusText}`);
     e.errors = body?.errors;
     e.bindings = body?.bindings;
+    // The shutdown 403 carries its own verdict, so a page whose first health
+    // poll has not landed yet still learns why before the second press.
+    if (body?.shutdown) e.shutdown = body.shutdown;
     e.status = res.status;
     throw e;
   }
@@ -64,6 +82,10 @@ const state = {
   // whole report - state, address, the server's own error text and the hint -
   // instead of leaving it in a tooltip nobody on a phone will ever see.
   health: null,
+  // The server's own verdict about whether this page may press the shut down
+  // button. Null until the first health poll lands, and re-asked on every poll
+  // because the answer depends on which address the browser connected from.
+  shutdown: null,
   // The savedAt of the queue recovery this page has already announced. Not
   // persisted: a fresh page load is entitled to say it once, and a page left
   // open overnight is not entitled to say it again in the morning.
@@ -165,6 +187,10 @@ async function refreshHealth() {
     }
     $('healthBtn').title = c.error || c.problem || `${c.host}:${c.port}`;
     renderHealthDetail();
+    // The same poll that proves the server is alive also answers whether this
+    // page may stop it, so the reason is already here before the button is hit.
+    state.shutdown = h.shutdown ?? state.shutdown;
+    renderShutdownNote();
   } catch (e) {
     dot.className = 'dot bad';
     text.textContent = stopping ? 'server stopped' : 'server offline';
@@ -302,13 +328,20 @@ function useAsInput(entry) {
 }
 
 function syncEnhanceHint() {
-  // Reference images no longer bypass the enhancer: node 226 reads the images
-  // itself, so an image job is enhanced like any other. The only thing the
-  // enhancer switches off is the suggested aspect, and syncAspectUi owns that.
+  // The toggle no longer just flips a switch inside one graph: OFF means "run
+  // workflow_api_enhanceless.json instead" - a separate file with the enhancer
+  // deleted out of it. So the hint has to say which file runs, and that two
+  // fields silently stop applying over there (Postprompt and Prompt refresh have
+  // no nodes in it), rather than leaving the page implying they still count.
+  // Reference images no longer bypass the enhancer either: node 226 reads the
+  // images itself, so an image job is enhanced like any other. The only thing
+  // the enhancer switches off is the suggested aspect, and syncAspectUi owns that.
   const hasImages = state.slots.filter(Boolean).length;
-  $('enhanceHint').textContent = hasImages
-    ? 'reads the reference images too'
-    : 'runs the Qwen-VL enhancer';
+  $('enhanceHint').textContent = !$('enhance').checked
+    ? 'off - runs workflow_api_enhanceless.json (no postprompt or prompt refresh)'
+    : hasImages
+      ? 'reads the reference images too'
+      : 'runs the Qwen-VL enhancer';
 }
 
 let pickTarget = 0;
@@ -2190,15 +2223,42 @@ lbImg.addEventListener('wheel', (e) => {
 
 // ---------------------------------------------------------------- settings
 /**
- * Which graph the bindings editor is looking at. Generate and Upscale read two
- * different files whose node ids share nothing, so one editor with a switch is
- * the only way to keep them from being confused - and the check/save/reset calls
- * all have to carry the same answer, or the page would validate the generate
- * bindings while showing the upscale ones.
+ * Which graph the bindings editor is looking at. Three graphs, three files, and
+ * one editor with a switch is the only way to keep them from being confused -
+ * and the check/save/reset calls all have to carry the same answer, or the page
+ * would validate the enhanceless bindings while showing the normal ones. The
+ * enhance toggle picks between the two generate graphs at run time, so both
+ * appear here as their own entry rather than one hidden behind the toggle.
  */
-const bindKind = () => $('bindKind')?.value === 'upscale' ? 'upscale' : 'generate';
-const bindingsFor = (kind) => (kind === 'upscale' ? state.cfg?.upscaleBindings : state.cfg?.bindings) ?? {};
-const bindingsPath = (kind) => (kind === 'upscale' ? '/api/upscale/workflow' : '/api/workflow');
+const BIND_KINDS = ['generate', 'enhanceless', 'upscale'];
+const bindKind = () => (BIND_KINDS.includes($('bindKind')?.value) ? $('bindKind').value : 'generate');
+const bindingsFor = (kind) =>
+  (kind === 'enhanceless'
+    ? state.cfg?.enhancelessBindings
+    : kind === 'upscale'
+      ? state.cfg?.upscaleBindings
+      : state.cfg?.bindings) ?? {};
+const bindingsPath = (kind) =>
+  kind === 'enhanceless'
+    ? '/api/enhanceless/workflow'
+    : kind === 'upscale'
+      ? '/api/upscale/workflow'
+      : '/api/workflow';
+// The stale report the save response carries for this map - one key per map on
+// the server, so the page has to ask for the matching one.
+const staleKeyFor = (kind) =>
+  kind === 'enhanceless'
+    ? 'staleEnhancelessBindings'
+    : kind === 'upscale'
+      ? 'staleUpscaleBindings'
+      : 'staleBindings';
+// The file this kind's JSON lives in, for messages.
+const workflowFileFor = (kind) =>
+  kind === 'enhanceless'
+    ? 'workflow_api_enhanceless.json'
+    : kind === 'upscale'
+      ? 'upscale_api.json'
+      : 'workflow_api.json';
 
 async function loadSettings() {
   try {
@@ -2319,13 +2379,18 @@ $('saveBindings').onclick = async () => {
   msg.textContent = 'saving…';
   msg.classList.remove('bad');
   try {
-    const patch = kind === 'upscale'
-      ? { upscaleBindings: collectBindings() }
-      : { bindings: collectBindings() };
+    // One key per map, chosen by the same switch that chose the rows - saving the
+    // enhanceless rows into `bindings` would point the normal graph at nodes only
+    // the enhanceless file has, and every enhance-on run would be refused.
+    const patch = kind === 'enhanceless'
+      ? { enhancelessBindings: collectBindings() }
+      : kind === 'upscale'
+        ? { upscaleBindings: collectBindings() }
+        : { bindings: collectBindings() };
     const body = await api('/api/config', { method: 'PUT', body: JSON.stringify(patch) });
     state.cfg = body.config;
     renderBindings(bindingsFor(kind));
-    const dropped = kind === 'upscale' ? (body.staleUpscaleBindings ?? []) : (body.staleBindings ?? []);
+    const dropped = body[staleKeyFor(kind)] ?? [];
     await checkBindings();
     if (dropped.length) {
       msg.textContent = `saved, but ignored unknown setting(s): ${dropped.join(', ')}`;
@@ -2415,9 +2480,17 @@ async function checkBindings() {
       if (!r.ok) bad++;
     }
     paintBindingMarks(bindings);
+    // Which button refuses depends on the map: the enhanceless rows are only
+    // checked when the enhance toggle is OFF (that flag picks both the file and
+    // the map), so the message has to say which position it applies to.
+    const button = kind === 'upscale'
+      ? 'the Upscale button'
+      : kind === 'enhanceless'
+        ? 'the Generate button (enhance toggle off)'
+        : 'the Generate button';
     msg.textContent = ok
       ? `all ${kind} bindings ok`
-      : `${bad} problem(s) - the ${kind === 'upscale' ? 'Upscale' : 'Generate'} button will refuse to run`;
+      : `${bad} problem(s) - ${button} will refuse to run`;
     msg.classList.toggle('bad', !ok);
   } catch (e) { msg.textContent = e.message; }
 }
@@ -2553,6 +2626,37 @@ function shutdownReport() {
   return { html: lines.join(''), offerHandover: unsent > 0 && !held };
 }
 
+/**
+ * The one permanent line under the shut down button.
+ *
+ * A bare refusal used to reach the page as a 403 that it answered by closing the
+ * dialog and firing a 2.6-second toast - so from another device, where that
+ * button is deliberately dead, it looked like a button that does nothing. The
+ * server now sends its verdict on every health poll, so the reason can sit here
+ * where it stays put and can be read before anything is pressed.
+ */
+function renderShutdownNote() {
+  const note = $('shutdownNote');
+  if (!note) return;
+  const v = state.shutdown;
+  if (!v || v.allowed !== false) {
+    note.textContent = '';
+    note.hidden = true;
+    return;
+  }
+  note.textContent = v.error || `This page cannot stop the server: ${v.because}.`;
+  note.hidden = false;
+}
+
+/** The same verdict, at the top of the confirmation, where it is about to matter. */
+function shutdownPermissionParagraph(v) {
+  if (!v || v.allowed !== false) return null;
+  return para(
+    v.error || `The server will refuse this: ${v.because}.`,
+    'bad'
+  );
+}
+
 function openShutdownModal() {
   setText('shTitle', 'Shut down mobile-cfy?');
   paintShutdownBody();
@@ -2561,6 +2665,14 @@ function openShutdownModal() {
   setText('shGo', 'shut it down');
   setHidden('shCancel', false);
   setHidden('shutdownModal', false);
+  // Opened before the health poll has landed (or after it failed): ask the one
+  // endpoint that carries the verdict rather than letting the button be pressed
+  // blind. Cheap, and the dialog repaints itself when the answer arrives.
+  if (!state.shutdown) {
+    refreshHealth().then(() => {
+      if (!$('shutdownModal').hidden && !stopping) paintShutdownBody();
+    });
+  }
   // The gallery is only loaded when that tab is opened, so an untouched session
   // would claim every image is downloaded when it simply has not looked yet.
   if (!state.galleryLoaded) {
@@ -2572,7 +2684,12 @@ function openShutdownModal() {
 
 function paintShutdownBody() {
   const r = shutdownReport();
-  $('shBody').innerHTML = r.html;
+  const body = $('shBody');
+  body.innerHTML = r.html;
+  // The refusal goes first: it is the only line that makes the rest of the
+  // dialog meaningful, and without it the button below is a dead end.
+  const deny = shutdownPermissionParagraph(state.shutdown);
+  if (deny) body.prepend(deny);
   setHidden('shHandoverRow', !r.offerHandover);
   if ($('shHandover')) $('shHandover').checked = r.offerHandover;
 }
@@ -2675,13 +2792,32 @@ on('shGo', async () => {
     });
     if (r.handover?.failures?.length) note = `${r.handover.failures.length} prompt(s) could not be handed over`;
   } catch (e) {
-    // A 403 is a refusal and must be shown; a dead socket means it stopped
-    // before it could answer, which the poll below confirms either way.
+    // A dead socket means it stopped before it could answer, which the poll
+    // below confirms either way. Anything carrying a status is a refusal, and
+    // it stays on screen inside this dialog: closing the dialog and firing a
+    // 2.6-second toast is what made a deliberately-refused button read as one
+    // that does nothing at all.
     if (e.status) {
       stopping = false;
-      closeShutdownModal();
+      if (e.shutdown) {
+        state.shutdown = e.shutdown;
+        renderShutdownNote();
+      }
+      setText('shTitle', 'Not shut down');
+      const body = $('shBody');
+      body.innerHTML = '';
+      body.append(para(e.message, 'bad'));
+      const why = shutdownPermissionParagraph(state.shutdown);
+      if (why) body.append(why);
+      // Both buttons stay live: nothing was asked of the server, so this is not
+      // a halfway state the page has to be talked out of.
+      setDisabled('shGo', false);
+      setText('shGo', 'try again');
+      setHidden('shAgain', true);
+      setHidden('shCancel', false);
+      // Also written beside the button in Settings, so the reason outlives this
+      // dialog and is there the next time the page is opened.
       setText('shutdownMsg', e.message);
-      toast(e.message);
       return;
     }
   }
@@ -2694,14 +2830,14 @@ on('shAgain', () => {
   watchForShutdown();
 });
 
-/** One handler for both graph files; `kind` says which file to write. */
+/** One handler for all three graph files; `kind` says which file to write. */
 async function uploadWorkflow(kind, inputId) {
   const file = $(inputId).files?.[0];
   if (!file) return;
   try {
     const workflow = JSON.parse(await file.text());
     const r = await api(bindingsPath(kind), { method: 'PUT', body: JSON.stringify({ workflow }) });
-    $('wfMsg').textContent = `saved ${r.nodes} nodes to ${kind === 'upscale' ? 'upscale_api.json' : 'workflow_api.json'}`;
+    $('wfMsg').textContent = `saved ${r.nodes} nodes to ${workflowFileFor(kind)}`;
     if (kind === bindKind()) {
       nodeListKind = kind;
       renderNodeList(workflow);
@@ -2713,6 +2849,7 @@ async function uploadWorkflow(kind, inputId) {
 }
 
 listen('wfUpload', 'change', () => uploadWorkflow('generate', 'wfUpload'));
+listen('enWfUpload', 'change', () => uploadWorkflow('enhanceless', 'enWfUpload'));
 listen('upWfUpload', 'change', () => uploadWorkflow('upscale', 'upWfUpload'));
 
 // The node reference follows the graph the bindings editor is on, and is only

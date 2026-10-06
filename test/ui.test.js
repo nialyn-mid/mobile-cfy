@@ -27,17 +27,56 @@ const appSrc = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
 const app = appSrc
   .replace(/\/\*[\s\S]*?\*\//g, '')
   .split('\n')
-  .map((line) => line.replace(/(^|[^:])\/\/.*$/, '$1'))
+  // The `m` is load-bearing for CRLF files: `.` does not match `\r`, so without
+  // it `$` cannot reach the end of a line that ends in `\r\n` and the comment
+  // survives the strip - which reads as app.js calling the very thing the
+  // comment says it deliberately does not call.
+  .map((line) => line.replace(/(^|[^:])\/\/.*$/gm, '$1'))
   .join('\n');
 
-/** Every id index.html declares, including ones written into markup strings. */
-const htmlIds = new Set([...html.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+/**
+ * Every id index.html ACTUALLY declares.
+ *
+ * HTML comments are stripped first, and that is the whole point of this change.
+ * Scanning the raw file counted `lbClose` as present because it appears inside
+ * `<!-- <button id="lbClose"> -->`, so the cross-check passed while
+ * `$('lbClose').onclick = ...` threw at module scope and took the lightbox's
+ * four pointer handlers (swipe, pinch, drag) down with it. A commented-out
+ * button is not a button.
+ */
+const liveHtml = html.replace(/<!--[\s\S]*?-->/g, '');
+const htmlIds = new Set([...liveHtml.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+
+/** Ids that exist in the file but only inside a comment - i.e. switched off. */
+const commentedOutIds = [];
+for (const c of html.matchAll(/<!--[\s\S]*?-->/g)) {
+  // One comment at a time: a regex that lets the match run past the closing
+  // `-->` would happily swallow the live markup sitting between two comments.
+  for (const id of c[0].matchAll(/\bid="([^"]+)"/g)) commentedOutIds.push(id[1]);
+}
 
 // Ids the script creates itself, with the line that makes them. Listed rather
 // than guessed at: an id that moves out of one of these into index.html should
 // come off the list.
 const BUILT_IN_JS = new Set([
   'shWaitText', // written into the modal body while shutting down
+]);
+
+/**
+ * Ids app.js still binds that the markup deliberately switched off - they exist
+ * only inside HTML comments.
+ *
+ * They are safe now that `$` resolves a missing element to a detached node, and
+ * that is the whole feature: commenting one button out used to throw at module
+ * scope and take the lightbox's pointer handlers with it. But the list stays
+ * explicit so that switching off a NEW id forces an edit right here - a silent
+ * disappearance is exactly how the lightbox broke. Each entry is also asserted
+ * to still be commented out, so uncommenting or deleting one retires it.
+ */
+const COMMENTED_OUT_OK = new Set([
+  'lbClose', // tap outside the image closes it instead
+  'lbZoomIn', // pinch on a phone; the +/− pair gave the room back to ⟳ and ⤒
+  'lbZoomOut',
 ]);
 
 /**
@@ -58,8 +97,45 @@ function referencedIds(src) {
 }
 
 test('every id app.js reaches for exists in index.html', () => {
-  const missing = [...referencedIds(app)].filter((id) => !htmlIds.has(id) && !BUILT_IN_JS.has(id)).sort();
+  const missing = [...referencedIds(app)]
+    .filter((id) => !htmlIds.has(id) && !BUILT_IN_JS.has(id) && !COMMENTED_OUT_OK.has(id))
+    .sort();
   assert.deepEqual(missing, [], `app.js uses ids that index.html does not have: ${missing.join(', ')}`);
+});
+
+test('a commented-out button cannot take the rest of the page down with it', () => {
+  // The crash this guards against was not a crash the user could see: one
+  // `$('x').onclick =` against an id that markup no longer has threw at module
+  // top level, and because app.js is a module that aborted everything after it.
+  // So the check above is a safety net, not the fix - `$` itself is total now.
+  assert.match(
+    appSrc,
+    /const \$ = \(id\) => document\.getElementById\(id\) \?\? document\.createElement\('div'\)/,
+    'a missing element must resolve to a detached node, never to null'
+  );
+
+  // And the ids that were only ever commented out must stay that way in the
+  // cross-check: if one of them is quietly re-introduced, the markup test above
+  // would go quiet again unless the comment stripping is doing its job.
+  assert.ok(
+    commentedOutIds.length >= 1,
+    'expected at least one id to live inside an HTML comment, or this test is not testing anything'
+  );
+  for (const id of commentedOutIds) {
+    assert.ok(
+      !htmlIds.has(id),
+      `${id} is commented out, so it must not also be a live id in the markup`
+    );
+  }
+  // Every acknowledged id must still be in that commented-out set. If it was
+  // uncommented, the live markup wins and this list should shrink; if the line
+  // was deleted, the acknowledgment should go with it.
+  for (const id of COMMENTED_OUT_OK) {
+    assert.ok(
+      commentedOutIds.includes(id),
+      `${id} was acknowledged as commented out but is not inside a comment any more - update COMMENTED_OUT_OK`
+    );
+  }
 });
 
 test('the upscale tab and its shared queue panel are wired into the markup', () => {
@@ -81,6 +157,45 @@ test('the tabs list every section that is reachable', () => {
   const sections = [...html.matchAll(/<section id="tab-([\w-]+)"/g)].map((m) => m[1]);
   for (const name of sections) {
     assert.ok(buttons.includes(name), `no tab button for #tab-${name}`);
+  }
+});
+
+test('the bindings card offers all three graphs, each wired end to end', () => {
+  // Three workflows means three rows of Settings: the select picks the kind,
+  // app.js maps kind -> map, workflow route, stale report and upload input, and
+  // index.html supplies the option, the upload button and its file name. Any
+  // layer missing an entry silently falls back to 'generate' - the exact bug
+  // this test exists to catch (an enhanceless save writing `bindings`).
+  const start = liveHtml.indexOf('id="bindKind"');
+  assert.ok(start >= 0, 'the kind select is missing');
+  // Slice to the select's OWN closing tag: indexOf('</select>') from 0 finds an
+  // earlier dropdown (the aspect one) and yields an empty window.
+  const select = liveHtml.slice(start, liveHtml.indexOf('</select>', start));
+  const options = [...select.matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(options, ['generate', 'enhanceless', 'upscale'],
+    'the kind select lists every graph, in Settings order');
+
+  assert.equal(htmlIds.has('enWfUpload'), true, 'the enhanceless workflow needs its own replace button');
+  assert.match(liveHtml, /replace workflow_api_enhanceless\.json<input id="enWfUpload"/,
+    'the button names the file it replaces');
+  assert.match(liveHtml, /replace workflow_api\.json<input id="wfUpload"/);
+  assert.match(liveHtml, /replace upscale_api\.json<input id="upWfUpload"/);
+
+  // app.js: every helper is three-way, and the missing entries default to
+  // 'generate' - which is why each one has to be listed here explicitly.
+  assert.match(app, /const BIND_KINDS = \['generate', 'enhanceless', 'upscale'\]/);
+  for (const [snippet, what] of [
+    [/kind === 'enhanceless'\s*\? state\.cfg\?\.enhancelessBindings/, 'bindingsFor reads the third map'],
+    [/kind === 'enhanceless'\s*\? '\/api\/enhanceless\/workflow'/, 'bindingsPath reads the third route'],
+    [/kind === 'enhanceless'\s*\? 'staleEnhancelessBindings'/, 'the stale report has its own key'],
+    [/kind === 'enhanceless'\s*\? 'workflow_api_enhanceless\.json'/, 'workflowFileFor names the third file'],
+    [/\? \{ enhancelessBindings: collectBindings\(\) \}/, 'saving posts the third map under its own name'],
+    [/listen\('enWfUpload', 'change', \(\) => uploadWorkflow\('enhanceless', 'enWfUpload'\)\)/,
+      'the third upload input is listened to'],
+    [/workflow_api_enhanceless\.json \(no postprompt or prompt refresh\)/,
+      'the enhance hint says what the off path runs'],
+  ]) {
+    assert.match(app, snippet, what);
   }
 });
 
@@ -298,6 +413,54 @@ test('the health dot leads to a written report, not a tooltip', () => {
   assert.match(app, /copyText\(healthReportText\(\)\)/);
   // pre-wrap, or every line but the last runs together.
   assert.match(fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8'), /\.note\.report \{[^}]*white-space: pre-wrap/);
+});
+
+test('a shut down that will be refused says so before the button is pressed', () => {
+  // The report: the button only works from the phone itself. Asked from another
+  // device it answered 403, and the page answered that by closing the dialog and
+  // firing a 2.6-second toast - so it read as a button that does nothing at all.
+  assert.match(html, /id="shutdownNote"/, 'a permanent line under the button, not just a toast');
+  assert.match(html, /class="note warn" id="shutdownNote" hidden/, 'and it says warn, not warn-hidden-by-accident');
+  assert.match(app, /function renderShutdownNote\(\)/);
+
+  // The verdict comes from the poll the page already makes, so it is known before
+  // anything is pressed.
+  const health = app.slice(app.indexOf('async function refreshHealth'), app.indexOf('function healthReportText'));
+  assert.match(health, /h\.shutdown/, 'the health answer carries it');
+  assert.match(health, /renderShutdownNote\(\)/);
+
+  // Both carriers print the server's own words rather than a local guess, so the
+  // pre-press line and the post-press error cannot drift apart.
+  const note = app.slice(app.indexOf('function renderShutdownNote'), app.indexOf('function shutdownPermissionParagraph'));
+  assert.match(note, /v\.allowed !== false/, 'nothing shown when it is allowed');
+  assert.match(note, /note\.hidden = true/);
+  assert.match(note, /v\.error/);
+  const para = app.slice(app.indexOf('function shutdownPermissionParagraph'), app.indexOf('function openShutdownModal'));
+  assert.match(para, /v\.error/);
+
+  // The dialog leads with the refusal...
+  const paint = app.slice(app.indexOf('function paintShutdownBody'), app.indexOf('function closeShutdownModal'));
+  assert.match(paint, /shutdownPermissionParagraph\(state\.shutdown\)/);
+  assert.match(paint, /body\.prepend\(deny\)/, 'above the consequences, not buried under them');
+
+  // ...and a refusal leaves it open. This is the regression: the old catch did
+  // closeShutdownModal() + toast(), which is the whole complaint.
+  const shGo = app.slice(app.indexOf("on('shGo'"), app.indexOf("on('shAgain'"));
+  assert.match(shGo, /if \(e\.status\) \{/);
+  assert.match(shGo, /para\(e\.message, 'bad'\)/, 'the refusal stays on screen');
+  assert.doesNotMatch(shGo, /closeShutdownModal\(\)/, 'the dialog is not thrown away on a refusal');
+  assert.doesNotMatch(shGo, /toast\(e\.message\)/, 'a 2.6-second toast is not the only feedback');
+  assert.match(shGo, /setDisabled\('shGo', false\)/, 'and the button is not left dead');
+  assert.match(shGo, /setText\('shTitle', 'Not shut down'\)/);
+  // The 403 body carries the verdict too, for a page whose first poll has not landed.
+  assert.match(shGo, /if \(e\.shutdown\) \{/);
+  const apiSrc = app.slice(app.indexOf('const api ='), app.indexOf('const state ='));
+  assert.match(apiSrc, /if \(body\?\.shutdown\) e\.shutdown = body\.shutdown;/);
+
+  // Opened before the first poll landed: ask, rather than let the button be blind.
+  const open = app.slice(app.indexOf('function openShutdownModal'), app.indexOf('function paintShutdownBody'));
+  assert.match(open, /if \(!state\.shutdown\) \{/, 'a missing verdict is fetched, not assumed');
+  assert.match(open, /paintShutdownBody\(\)/, 'and the dialog repaints when it lands');
 });
 
 test('the server has a route for every api path the page calls', () => {

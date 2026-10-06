@@ -23,7 +23,7 @@ import { listEntries, findEntry, clearIndex, updateEntry, missingDownloads } fro
 import { runner } from './lib/runner.js';
 import { sweep as sweepDownloadsNow, startRetryTicker } from './lib/retry.js';
 import { downloadImage, uniquePath, renderTemplate, sanitizeFilename } from './lib/download.js';
-import { isSameHost } from './lib/shutdown.js';
+import { shutdownPermission } from './lib/shutdown.js';
 
 const ROOT = process.env.MOBILE_CFY_ROOT || process.cwd();
 init(ROOT);
@@ -179,6 +179,10 @@ route('GET', '/api/health', async (req, res) => {
     // Classified, with a hint: "unreachable" alone sent people looking in the
     // wrong place when the real fault was a login page or a pasted scheme.
     comfy: await comfyHealth(client),
+    // Whether this page is even allowed to press the shut down button. It rides
+    // the poll the page already makes, so the button can say why it will be
+    // refused instead of finding out by being pressed.
+    shutdown: shutdownVerdict(req),
     downloadDir: { path: P.downloadDir, exists: fs.existsSync(P.downloadDir) },
     // Carried here because this is the poll the page already makes: it is how
     // the UI learns that a queue paused for the network is worth resuming again.
@@ -206,6 +210,7 @@ route('GET', '/api/config', async (req, res) => {
     envFile: envFilePath(),
     resolved: {
       workflow: P.workflow,
+      enhancelessWorkflow: P.enhancelessWorkflow,
       upscaleWorkflow: P.upscaleWorkflow,
       downloadDir: P.downloadDir,
       dataDir: P.dataDir,
@@ -221,11 +226,16 @@ route('PUT', '/api/config', async (req, res) => {
     config: saved,
     // Names the server does not recognise are dropped on purpose (see
     // mergeConfig). Report them so the UI can say so instead of showing a
-    // cheerful "saved" next to a binding that never took effect.
+    // cheerful "saved" next to a binding that never took effect. One report per
+    // map: an unknown name in the enhanceless map is a different fix than the
+    // same name in the normal one.
     staleBindings: saved.staleBindings ?? [],
+    staleUpscaleBindings: saved.staleUpscaleBindings ?? [],
+    staleEnhancelessBindings: saved.staleEnhancelessBindings ?? [],
     resolved: {
       downloadDir: paths().downloadDir,
       workflow: paths().workflow,
+      enhancelessWorkflow: paths().enhancelessWorkflow,
       upscaleWorkflow: paths().upscaleWorkflow,
     },
   });
@@ -238,34 +248,31 @@ route('POST', '/api/config/bindings/reset', async (req, res) => {
   // hand (node id changed, input name left behind) stays broken on purpose and
   // needs a way back. This is that way back, and it reports what it restored so a
   // workflow the server cannot read is visible immediately rather than after the
-  // next run fails. `kind` picks which map: the two point at different files.
+  // next run fails. `kind` picks which map: the three point at different files.
   const body = await readJson(req);
-  const upscale = body?.kind === 'upscale';
-  const saved = saveConfig(
-    upscale
-      ? { upscaleBindings: structuredClone(DEFAULTS.upscaleBindings) }
-      : { bindings: structuredClone(DEFAULTS.bindings) },
-  );
-  const bindings = upscale
-    ? validateBindings(saved.upscaleBindings, P.upscaleWorkflow)
-    : validateBindings(saved.bindings);
+  const kind = bindingKind(body?.kind);
+  const saved = saveConfig({ [kind.map]: structuredClone(DEFAULTS[kind.map]) });
+  const bindings = validateBindings(saved[kind.map], kind.file());
   json(res, 200, {
     config: saved,
-    kind: upscale ? 'upscale' : 'generate',
+    kind: body?.kind === 'upscale' || body?.kind === 'enhanceless' ? body.kind : 'generate',
     bindings,
     ok: bindings.every((b) => b.ok),
     staleBindings: saved.staleBindings ?? [],
     staleUpscaleBindings: saved.staleUpscaleBindings ?? [],
+    staleEnhancelessBindings: saved.staleEnhancelessBindings ?? [],
   });
 });
 
 route('POST', '/api/config/validate', async (req, res) => {
   const body = await readJson(req);
-  const upscale = body?.kind === 'upscale';
-  const bindings = upscale
-    ? validateBindings(state.config.upscaleBindings, P.upscaleWorkflow)
-    : validateBindings(state.config.bindings);
-  json(res, 200, { kind: upscale ? 'upscale' : 'generate', bindings, ok: bindings.every((b) => b.ok) });
+  const kind = bindingKind(body?.kind);
+  const bindings = validateBindings(state.config[kind.map], kind.file());
+  json(res, 200, {
+    kind: body?.kind === 'upscale' || body?.kind === 'enhanceless' ? body.kind : 'generate',
+    bindings,
+    ok: bindings.every((b) => b.ok),
+  });
 });
 
 route('POST', '/api/paths/check', async (req, res) => {
@@ -315,6 +322,8 @@ function writeWorkflowRoute(file) {
 
 route('GET', '/api/workflow', readWorkflowRoute(paths().workflow));
 route('PUT', '/api/workflow', writeWorkflowRoute(paths().workflow));
+route('GET', '/api/enhanceless/workflow', readWorkflowRoute(paths().enhancelessWorkflow));
+route('PUT', '/api/enhanceless/workflow', writeWorkflowRoute(paths().enhancelessWorkflow));
 route('GET', '/api/upscale/workflow', readWorkflowRoute(paths().upscaleWorkflow));
 route('PUT', '/api/upscale/workflow', writeWorkflowRoute(paths().upscaleWorkflow));
 
@@ -365,12 +374,33 @@ function bindingGuard(bindings, workflowFile) {
   throw err;
 }
 
+/**
+ * One `kind` -> the binding map, the workflow file and the Settings label that
+ * go together. Three graphs, so three answers, looked up in exactly one place: a
+ * validate, a reset and a generate pre-flight that disagreed about which file a
+ * kind means would report "missing node" against the wrong graph.
+ */
+const BINDING_KINDS = {
+  generate: { map: 'bindings', file: () => P.workflow, label: 'Generate' },
+  enhanceless: { map: 'enhancelessBindings', file: () => P.enhancelessWorkflow, label: 'Enhanceless' },
+  upscale: { map: 'upscaleBindings', file: () => P.upscaleWorkflow, label: 'Upscale' },
+};
+function bindingKind(kind) {
+  return BINDING_KINDS[kind] ?? BINDING_KINDS.generate;
+}
+
 route('POST', '/api/generate', async (req, res) => {
-  bindingGuard(state.config.bindings);
+  // Read the body BEFORE guarding: with the enhanceless workflow, promptEnhance
+  // picks which graph the job runs on, so it must also pick which bindings get
+  // checked. Guarding the normal map while the runner builds the enhanceless
+  // graph would validate nodes that file does not have and refuse every job.
+  const body = await readJson(req);
+  const kind = bindingKind(body?.promptEnhance === false ? 'enhanceless' : 'generate');
+  bindingGuard(state.config[kind.map], kind.file());
   // The kind is stamped here, not read from the body: this route runs the
   // generate graph and checks the generate bindings, so a body claiming to be an
   // upscale would otherwise slip past both.
-  const job = runner.enqueue({ ...(await readJson(req)), kind: 'generate' });
+  const job = runner.enqueue({ ...(body ?? {}), kind: 'generate' });
   json(res, 202, job);
 });
 
@@ -545,13 +575,29 @@ route('DELETE', '/api/gallery', async (req, res) => {
 
 // ------------------------------------------------------------------ shutdown
 
-route('POST', '/api/shutdown', async (req, res) => {
+/**
+ * The verdict the page is given about its own right to press the button, in a
+ * shape it can print. The POST below answers with the same thing, so the reason
+ * the modal shows before the press and the error it shows after it can never
+ * disagree.
+ */
+function shutdownVerdict(req) {
+  const p = shutdownPermission(req);
   const port = config().server.port;
-  if (!isSameHost(req)) {
-    return json(res, 403, {
-      error: `the shut down button only works from the phone - open the UI at http://127.0.0.1:${port}`,
-    });
-  }
+  return p.allowed
+    ? { ...p, error: null }
+    : {
+        ...p,
+        error:
+          `the shut down button only works from the phone, and ${p.because}. ` +
+          `Open the UI at http://127.0.0.1:${port} and press it there, ` +
+          `or start the server with MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN=1 to allow it from anywhere`,
+      };
+}
+
+route('POST', '/api/shutdown', async (req, res) => {
+  const verdict = shutdownVerdict(req);
+  if (!verdict.allowed) return json(res, 403, { error: verdict.error, shutdown: verdict });
   if (stopping) return json(res, 200, { ok: true, stopping: true, already: true });
 
   // Set BEFORE the optional handover: that await is a long pause in which a
@@ -729,13 +775,20 @@ server.listen(c.server.port, c.server.host, () => {
   console.log(`  auth env   ${envFilePath()}`);
   console.log(`  downloads  ${P.downloadDir}${fs.existsSync(P.downloadDir) ? '' : '  (created on first run)'}`);
   const bad = validateBindings(c.bindings).filter((r) => !r.ok);
-  // Warn about both, tagged, because the two files share no node ids and a
-  // broken upscale binding would otherwise be reported as a missing node in a
-  // graph that does not contain it.
+  // Warn about all three, tagged, because the files are different graphs: a
+  // broken enhanceless binding would otherwise be reported as a missing node in
+  // a graph that does not contain it (and vice versa).
+  const enBad = fs.existsSync(P.enhancelessWorkflow)
+    ? validateBindings(c.enhancelessBindings, P.enhancelessWorkflow).filter((r) => !r.ok)
+    : [];
   const upBad = fs.existsSync(P.upscaleWorkflow)
     ? validateBindings(c.upscaleBindings, P.upscaleWorkflow).filter((r) => !r.ok)
     : [];
-  for (const [label, list] of [['binding', bad], ['upscale binding', upBad]]) {
+  for (const [label, list] of [
+    ['binding', bad],
+    ['enhanceless binding', enBad],
+    ['upscale binding', upBad],
+  ]) {
     if (!list.length) continue;
     console.warn(`  ⚠ ${list.length} ${label} problem(s):`);
     for (const b of list) console.warn(`     ${b.binding}${b.slot ? ` #${b.slot}` : ''}: ${b.reason}`);

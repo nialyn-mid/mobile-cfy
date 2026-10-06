@@ -26,6 +26,7 @@ function useTempRoot(port) {
     comfy: { host: '127.0.0.1', port, timeoutMs: 5000 },
     // Absolute, so the temp root does not need a copy of the workflow.
     workflowFile: path.join(ROOT, 'workflow_api.json'),
+    enhancelessWorkflowFile: path.join(ROOT, 'workflow_api_enhanceless.json'),
     upscaleWorkflowFile: path.join(ROOT, 'upscale_api.json'),
     downloadDir: path.join(root, 'downloads'),
     dataDir: path.join(root, 'data'),
@@ -558,16 +559,24 @@ test('a postprompt reaches node 256 and comes back in the saved history row', as
     assert.equal(wf['41'].inputs.value, 'a cat in a kitchen');
     assert.equal(wf['44'].inputs.value, WORKFLOW_RAW_DEFAULT, 'the editor\'s own raw text is untouched');
 
-    // Raw path: same postprompt, and it is still on the wire.
+    // Raw path: promptEnhance off now means the ENHANCELESS workflow - a
+    // different file, not the same graph with a switch flipped. The prompt still
+    // lands in node 44 (the id matches today, which is exactly why Settings
+    // keeps a separate map for this file rather than reusing the generate one),
+    // and the nodes the enhanced path relies on - enhancer 226, branch 176,
+    // Postprompt 256 - are not in that graph at all, so a postprompt typed with
+    // enhance off has nowhere to go.
     const raw = runner.enqueue({
       ...JOB('a dog in a park', 1),
       promptEnhance: false,
       postprompt: 'at golden hour',
     });
     await waitFor(() => comfy.state.prompts.length === 2, 'the raw prompt');
-    assert.equal(comfy.state.prompts[1].payload['44'].inputs.value, 'a dog in a park');
-    assert.equal(comfy.state.prompts[1].payload['256'].inputs.value, 'at golden hour');
-    assert.equal(comfy.state.prompts[1].payload['176'].inputs.cond, false, 'the branch really is on raw');
+    const rawWf = comfy.state.prompts[1].payload;
+    assert.equal(rawWf['44'].inputs.value, 'a dog in a park');
+    assert.ok(!('226' in rawWf), 'the enhancer is not in the enhanceless graph');
+    assert.ok(!('176' in rawWf), 'nor the enhance switch - picking the file replaced it');
+    assert.ok(!('256' in rawWf), 'nor Postprompt, so that text is not applied to this run');
 
     // No postprompt at all leaves the editor's own node 256 text alone rather
     // than blanking it.

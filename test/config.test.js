@@ -240,18 +240,22 @@ test('a binding the user customised by hand is preserved', () => {
 
 // ------------------------------------------------- the second workflow
 
-test('the two binding maps are separate, and each reports its own stale names', () => {
+test('the three binding maps are separate, and each reports its own stale names', () => {
   const merged = mergeConfig(DEFAULTS, {
     bindings: { legacySwitch: { node: '12', input: 'value' } },
     upscaleBindings: { oldUpscale: { node: '5', input: 'value' } },
+    enhancelessBindings: { oldEnhanceless: { node: '7', input: 'value' } },
   });
   assert.deepEqual(merged.staleBindings, ['legacySwitch']);
   assert.deepEqual(merged.staleUpscaleBindings, ['oldUpscale']);
-  // A stale generate name must not evict an upscale binding of the same shape.
+  assert.deepEqual(merged.staleEnhancelessBindings, ['oldEnhanceless']);
+  // A stale name in one map must not evict a binding of the same shape in another.
   assert.equal('oldUpscale' in merged.upscaleBindings, false);
+  assert.equal('oldEnhanceless' in merged.enhancelessBindings, false);
   assert.equal('legacySwitch' in merged.bindings, false);
   assert.deepEqual(merged.bindings.seed, DEFAULTS.bindings.seed, 'and the real ones survive');
   assert.deepEqual(merged.upscaleBindings.scale, DEFAULTS.upscaleBindings.scale);
+  assert.deepEqual(merged.enhancelessBindings.promptRaw, DEFAULTS.enhancelessBindings.promptRaw);
 });
 
 test('a hand-edited upscale binding is preserved, like any other', () => {
@@ -273,6 +277,7 @@ test('the saved config never keeps the "these were stale" reports', () => {
     const onDisk = JSON.parse(fs.readFileSync(path.join(root, 'config.json'), 'utf8'));
     assert.equal('staleUpscaleBindings' in onDisk, false);
     assert.equal('staleBindings' in onDisk, false);
+    assert.equal('staleEnhancelessBindings' in onDisk, false, 'all three reports are stripped, not just the first two');
     assert.equal('ghost' in onDisk.upscaleBindings, false, 'the dropped name is not written either');
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
@@ -289,6 +294,22 @@ test('the upscale workflow is resolved to a real file next to the app', () => {
     // Both graphs live in the same place, and they are not the same file.
     assert.equal(path.dirname(p.upscaleWorkflow), path.dirname(p.workflow));
     assert.notEqual(p.upscaleWorkflow, p.workflow);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('the enhanceless workflow is resolved to a real file next to the app', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mobile-cfy-cfg-'));
+  try {
+    init(root);
+    const p = paths();
+    assert.equal(path.basename(p.enhancelessWorkflow), DEFAULTS.enhancelessWorkflowFile);
+    assert.equal(path.dirname(p.enhancelessWorkflow), p.root);
+    // All three graphs live in the same place, and they are three files.
+    assert.equal(path.dirname(p.enhancelessWorkflow), path.dirname(p.workflow));
+    assert.notEqual(p.enhancelessWorkflow, p.workflow);
+    assert.notEqual(p.enhancelessWorkflow, p.upscaleWorkflow);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

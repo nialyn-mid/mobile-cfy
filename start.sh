@@ -1,9 +1,13 @@
 #!/data/data/com.termux/files/usr/bin/bash
-# mobile-cfy launcher. Start the server and open the web UI in the Termux browser.
+# mobile-cfy launcher. Starts the server in the foreground.
 #
 #   bash start.sh            run in the foreground (Ctrl-C stops it)
-#   bash start.sh --no-open  do not open a browser window
-#   PORT=4000 bash start.sh  override the port from config.json
+#   bash start.sh --open     also open the web UI in the browser
+#   bash start.sh --no-open  accepted and ignored - opening is off by default
+#
+# Opening the browser is opt-in now. Doing it on every start threw the Termux
+# session behind a page nobody had asked for yet, which on a phone means losing
+# sight of the log the server is writing into at the exact moment you start it.
 #
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -59,7 +63,18 @@ for _ in $(seq 1 40); do
   sleep 0.25
 done
 
-if [ "${1:-}" != "--no-open" ]; then
+# Opening the browser is opt-in. --no-open is still accepted, so an old habit or
+# a saved command line keeps working rather than failing on an unknown flag.
+open_ui=false
+for arg in "$@"; do
+  case "$arg" in
+    --open)    open_ui=true ;;
+    --no-open) open_ui=false ;;
+    *) echo "warning: ignoring unknown option: $arg" >&2 ;;
+  esac
+done
+
+if [ "$open_ui" = true ]; then
   termux-open-url "http://127.0.0.1:${port}" >/dev/null 2>&1 || true
 fi
 
@@ -68,6 +83,7 @@ ip="$(ip -4 addr show wlan0 2>/dev/null | sed -n 's/.*inet \([0-9.]\{1,3\}\.[0-9
 echo
 echo "  mobile-cfy  http://127.0.0.1:${port}"
 [ -n "$ip" ] && echo "  from a desktop on the same wifi:  http://${ip}:${port}"
+echo "  open the page:  bash start.sh --open   (or just tap the link above)"
 echo "  stop with Ctrl-C, or: bash stop.sh"
 echo
 

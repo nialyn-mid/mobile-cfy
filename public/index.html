@@ -296,13 +296,14 @@
         <label class="btn ghost sm">for
           <select id="bindKind">
             <option value="generate">Generate</option>
+            <option value="enhanceless">Enhanceless</option>
             <option value="upscale">Upscale</option>
           </select>
         </label>
         <button id="checkBindings" class="btn ghost sm" type="button">check</button>
       </span>
     </div>
-    <p class="note">Every feature points at a workflow node. A wrong id fails silently, so check after editing. Generate and Upscale are two different files with no shared node ids, so they get their own set.</p>
+    <p class="note">Every feature points at a workflow node. A wrong id fails silently, so check after editing. Generate, Enhanceless and Upscale are three different files, so each gets its own set - Enhanceless is the generate graph with the enhancer deleted out of it, and it is what runs when Prompt enhance is off.</p>
     <div id="bindings" class="bindings"></div>
     <div class="btnrow">
       <button id="saveBindings" class="btn primary sm" type="button">Save bindings</button>
@@ -315,6 +316,7 @@
     <div class="card-hd">Workflow</div>
     <div class="btnrow">
       <label class="btn ghost sm">replace workflow_api.json<input id="wfUpload" type="file" accept="application/json,.json" hidden></label>
+      <label class="btn ghost sm">replace workflow_api_enhanceless.json<input id="enWfUpload" type="file" accept="application/json,.json" hidden></label>
       <label class="btn ghost sm">replace upscale_api.json<input id="upWfUpload" type="file" accept="application/json,.json" hidden></label>
       <span id="wfMsg" class="note"></span>
     </div>
@@ -333,6 +335,10 @@
       <button id="shutdownServer" class="btn danger sm" type="button">⏻ shut down server</button>
       <span id="shutdownMsg" class="note"></span>
     </div>
+    <!-- Why this page may not stop the server. Printed before the button is
+         pressed, because a button that answers only with a 403 the dialog then
+         throws away reads as a broken button. -->
+    <p class="note warn" id="shutdownNote" hidden></p>
     <p class="note">Start it again with <code>bash start.sh</code> in Termux. The page confirms the
       shutdown by watching the server stop answering, not by trusting the reply.</p>
   </div>

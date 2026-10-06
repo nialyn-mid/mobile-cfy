@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { isSameHost } from '../lib/shutdown.js';
+import { isSameHost, shutdownPermission } from '../lib/shutdown.js';
 import { startFakeComfyUI, sleep, dropRoot } from './helpers/fakeComfy.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -42,12 +42,55 @@ test('the remote shutdown override is honoured', () => {
   assert.equal(isSameHost(mismatch, { MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN: '0' }), false);
 });
 
+// A bare `false` is what made this button look dead: the page had nothing to
+// print before the press and nothing durable to print after the refusal.
+test('every verdict comes with a reason the page can print', () => {
+  const deny = shutdownPermission(req('192.168.1.99', '192.168.1.40'));
+  assert.equal(deny.allowed, false);
+  assert.match(deny.because, /another device/);
+  assert.match(deny.because, /192\.168\.1\.99/, 'names the address that was refused');
+
+  const allow = shutdownPermission(req('127.0.0.1', '127.0.0.1'));
+  assert.equal(allow.allowed, true);
+  assert.match(allow.because, /the phone itself/);
+
+  assert.equal(
+    shutdownPermission(req('192.168.1.99', '192.168.1.40'), { MOBILE_CFY_ALLOW_REMOTE_SHUTDOWN: '1' }).allowed,
+    true
+  );
+  assert.match(shutdownPermission({}).because, /could not be identified/);
+});
+
+test('the verdict and isSameHost can never disagree', () => {
+  for (const [remote, local] of [
+    ['127.0.0.1', '127.0.0.1'],
+    ['::1', '::1'],
+    ['::ffff:127.0.0.1', '127.0.0.1'],
+    ['192.168.1.40', '192.168.1.40'],
+    ['192.168.1.99', '192.168.1.40'],
+    ['', ''],
+  ]) {
+    assert.equal(
+      isSameHost(req(remote, local)),
+      shutdownPermission(req(remote, local)).allowed,
+      `${remote} vs ${local}`
+    );
+  }
+});
+
 // ------------------------------------------------------------- the real thing
 
 /** A throwaway server on its own root, pointed at a fake ComfyUI. */
 async function startServer(t, comfyPort) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mobile-cfy-shutdown-'));
   fs.copyFileSync(path.join(ROOT, 'workflow_api.json'), path.join(tmp, 'workflow_api.json'));
+  // The JOB below sends promptEnhance:false, which now means "run the
+  // enhanceless graph" - so that file has to exist in the temp root or the
+  // pre-flight refuses the job with "cannot read workflow" and nothing queues.
+  fs.copyFileSync(
+    path.join(ROOT, 'workflow_api_enhanceless.json'),
+    path.join(tmp, 'workflow_api_enhanceless.json'),
+  );
   fs.writeFileSync(
     path.join(tmp, 'config.json'),
     JSON.stringify({
@@ -87,7 +130,7 @@ async function startServer(t, comfyPort) {
   for (let i = 0; i < 80; i++) {
     try {
       const r = await fetch(`${base}/api/health`);
-      if (r.ok) return { child, exited, logs: () => out };
+      if (r.ok) return { child, exited, logs: () => out, health: await r.json() };
     } catch { /* not listening yet */ }
     await sleep(100);
   }
@@ -120,6 +163,12 @@ test('the shut down button stops the server and hands the queue over first', asy
   const comfy = await startFakeComfyUI({ mode: 'manual' });
   t.after(() => comfy.close());
   const app = await startServer(t, comfy.port);
+
+  // The page has to be able to learn it may not press this button from the poll
+  // it already makes, otherwise the only thing it can do is press and be refused.
+  assert.equal(app.health.shutdown.allowed, true, 'asked over loopback, so it is allowed');
+  assert.equal(app.health.shutdown.error, null);
+  assert.match(app.health.shutdown.because, /the phone itself/);
 
   // Two jobs waiting, held so nothing is submitted on its own.
   await post('/api/queue/pause');
