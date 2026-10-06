@@ -136,7 +136,8 @@
     </label>
     <label class="switch">
       <input type="checkbox" id="upScaleToDim">
-      <span>Scale to a target size instead of a multiplier</span>
+      <span></span>
+      <div><b>Scale to a target size</b><i>instead of a plain multiplier</i></div>
     </label>
     <div class="row2" id="upDims">
       <label class="field">
@@ -162,16 +163,23 @@
 
   <div class="card">
     <div class="card-hd"><span>Run</span></div>
-    <div class="row2">
+    <!-- Batch and seed share a row: both are numbers, and neither is a toggle, so
+         neither is the cramped-column case. The toggle below is its own row. -->
+    <div class="row2 seedrow">
+      <label class="field">
+        <span class="lbl">Batch <a href="#" id="helpUpBatch" class="hint">?</a></span>
+        <input type="number" id="upBatch" value="1" step="1" min="1" max="8" inputmode="numeric">
+      </label>
       <label class="field">
         <span class="lbl">Seed <a href="#" id="helpUpSeed" class="hint">?</a></span>
         <input type="text" id="upSeed" placeholder="random" inputmode="numeric" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
       </label>
-      <label class="switch">
-        <input type="checkbox" id="upDownload" checked>
-        <span>Download results</span>
-      </label>
     </div>
+    <label class="switch">
+      <input type="checkbox" id="upDownload" checked>
+      <span></span>
+      <div><b>Download results</b><i>save each image to the download folder</i></div>
+    </label>
     <p class="note" id="upMath"></p>
   </div>
 
@@ -252,6 +260,21 @@
     <div class="btnrow">
       <button id="saveConfig" class="btn primary sm" type="button">Save</button>
       <span id="cfgMsg" class="note"></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-hd">ComfyUI link</div>
+    <!-- The dot in the top bar is one word wide, which is enough to say that
+         something is wrong and never enough to say what. This is the rest of
+         it: the address that was dialled, the server's own error, and the next
+         step. It lives in Settings because every fault it can report is a
+         settings fault. -->
+    <p class="note report" id="healthDetail">not checked yet</p>
+    <div class="btnrow">
+      <button id="healthCheck" class="btn ghost sm" type="button">⟳ check again</button>
+      <button id="healthCopy" class="btn ghost sm" type="button">copy report</button>
+      <span class="note">tap the dot up top to come straight here</span>
     </div>
   </div>
 

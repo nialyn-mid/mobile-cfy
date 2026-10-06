@@ -116,6 +116,9 @@ textarea { resize: none; min-height: 76px; max-height: 55vh; line-height: 1.4; o
 input:focus, textarea:focus { outline: none; border-color: var(--accent); }
 
 .row2 { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; }
+/* Batch and seed are both short numbers, so the narrow column goes to batch and
+   the wide one to the seed - the mirror of the default .row2. */
+.row2.seedrow { grid-template-columns: 1fr 2fr; }
 .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
 
 /* --------------------------------------------------------------- switches */
@@ -185,6 +188,9 @@ label.btn { display: inline-block; }
 /* A held queue is not an error - nothing was lost - but it is the one thing
    standing between the operator and the work they queued, so it is loud. */
 .note.warn { color: var(--warn); font-weight: 600; }
+/* A report is lines, not a sentence: the health detail lists the address, the
+   server's own error and the hint, and each needs its own line. */
+.note.report { white-space: pre-wrap; word-break: break-word; margin: 0 0 10px; font-size: 12.5px; line-height: 1.45; }
 
 /* -------------------------------------------------------------- history */
 .hrow {

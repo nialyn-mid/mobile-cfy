@@ -111,6 +111,139 @@ test('the postprompt box is on the generate tab, sent, cleared, and not remember
   assert.equal(form.includes("'seed'"), false, 'nor the seed, which is the same kind of one-shot field');
 });
 
+test('every toggle keeps its words out of the pill', () => {
+  // `.switch > span` is the 42x25 PILL (see the switches block in style.css) -
+  // the words belong in a sibling `<div><b>title</b><i>hint</i></div>`, which is
+  // how all five generate toggles were written. The two upscale toggles had their
+  // label text in that span instead, so the words rendered inside a 42px grey
+  // rounded box: "crunched into the left", with the toggle itself invisible.
+  // Nothing fails when that happens, it just looks wrong on the phone.
+  const bodies = [...html.matchAll(/<label class="switch">([\s\S]*?)<\/label>/g)].map((m) => m[1]);
+  assert.ok(bodies.length >= 7, `expected every toggle to be a .switch, found ${bodies.length}`);
+  for (const body of bodies) {
+    const pill = body.match(/<span>([\s\S]*?)<\/span>/);
+    assert.ok(pill, 'a toggle with no pill span');
+    assert.equal(pill[1].trim(), '', 'the direct span is the pill and must be empty');
+    assert.match(body, /<div><b>[^<]/, 'the words belong in a sibling <div>, as <b>title</b>');
+  }
+});
+
+test('the upscale Run card gives its toggle a row of its own', () => {
+  // It was inside a `.row2` (2fr 1fr), which on a 360px phone is roughly a
+  // 100px column - too narrow for a pill plus the words naming what it does.
+  const runCard = html.slice(
+    html.lastIndexOf('<div class="card-hd"><span>Run</span></div>'),
+    html.indexOf('id="upscale"'),
+  );
+  assert.match(runCard, /id="upSeed"/);
+  assert.match(runCard, /id="upDownload"/);
+  assert.equal(/class="row[23]"/.test(runCard), false, 'the seed and the toggle must not share a grid column');
+});
+
+test('the upscale batch box is on the upscale tab, sent raw, and remembered', () => {
+  const up = html.slice(html.indexOf('id="tab-upscale"'), html.indexOf('<section id="tab-', html.indexOf('id="tab-upscale"')));
+  assert.match(up, /id="upBatch"/);
+  // It shares a row with the seed (two short numbers) and NOT with the toggle,
+  // which got its own row after the cramped-column complaint.
+  const row = up.match(/<div class="row2 seedrow">([\s\S]*?)<\/div>/);
+  assert.ok(row, 'the batch and seed share one grid row');
+  assert.match(row[1], /id="upBatch"/);
+  assert.match(row[1], /id="upSeed"/);
+
+  // Sent as the string the number input holds, so the server is the one that
+  // refuses junk with a message instead of this page rounding it away.
+  assert.match(app, /^ {8}batch: \$\('upBatch'\)\.value,$/m);
+  assert.match(app, /'upScale', 'upScaleToDim', 'upTargetWidth', 'upTargetHeight', 'upDownload', 'upBatch'/);
+
+  // History brings the count back with everything else about the recipe.
+  const restore = app.slice(app.indexOf('function restoreUpscaleHistory'));
+  assert.match(restore.slice(0, 900), /\$\('upBatch'\)\.value = s\.batch \?\? 1;/);
+});
+
+test('the upscale image and its guidance are spent by the job, the settings are not', () => {
+  // The same rule the Generate tab follows, one field over: clear what belongs
+  // to THIS job, keep the settings. The picture is the upscale's prompt, and the
+  // guidance is a note about that same picture - leaving either armed means the
+  // NEXT upscale silently runs against the wrong one, which is the bug the
+  // generate tab's references and postprompt had.
+  const submit = app.slice(app.indexOf("on('upscale', async () =>"), app.indexOf("$('helpRefresh')"));
+  assert.match(submit, /if \(state\.upImage\) \{/, 'the image is cleared once the job has it');
+  assert.match(submit, /setUpImage\(null\)/);
+  assert.match(submit, /\$\('upGuidance'\)\.value = ''/, 'the guidance goes with the picture it described');
+
+  // ...and the settings stay, because upscaling the next photo the same way is
+  // the entire point of a separate tab. Their values must not be reset here.
+  for (const id of ['upScale', 'upTargetWidth', 'upTargetHeight', 'upBatch', 'upSeed']) {
+    assert.equal(
+      new RegExp(`\\$\\('${id}'\\)\\.value =[^=]`).test(submit),
+      false,
+      `${id} is a setting, not part of this job`,
+    );
+  }
+  assert.equal(/\$\('upScaleToDim'\)\.checked =[^=]|\$\('upDownload'\)\.checked =[^=]/.test(submit), false);
+  // The user is told what vanished, in the same words the generate tab uses.
+  assert.match(submit, /cleared\.push\('image'\)/);
+  assert.match(submit, /toast\(`\$\{cleared\.join\(' and '\)\} cleared`\)/);
+});
+
+test('a hold for ComfyUI\'s own queue says so and keeps send all alive', () => {
+  const strip = app.slice(app.indexOf('function renderQueue'), app.indexOf("on('queueToggle'"));
+  // "Send all to ComfyUI" is the escape hatch the hold was designed around, so
+  // it must stay pressable during it - while staying dead for a lost connection,
+  // where sending could only fail.
+  assert.match(strip, /const busyHold = paused && q\.reason === 'busy';/);
+  assert.match(strip, /send\.disabled = handoff === 0 \|\| \(paused && !busyHold\);/);
+  // And the strip has to say WHY, in the reason's own words - a row that only
+  // says "paused" leaves the user guessing which kind of pause this is.
+  assert.match(strip, /held — \$\{q\.message/);
+  assert.match(strip, /start on their own as soon as it is free/);
+  assert.match(strip, /or press send all/);
+  // The same sentence has to reach the queue row, which is what is on screen.
+  const row = app.slice(
+    app.indexOf("j.status === 'paused' ? '⏸'"),
+    app.indexOf("const hint = $('queueHint')"),
+  );
+  assert.match(row, /waiting for ComfyUI's queue/);
+});
+
+test('the health dot leads to a written report, not a tooltip', () => {
+  // The failure this exists for: the reason for a red dot lived only in
+  // `title=`, which no phone renders and no thumb can hover. Someone whose
+  // ComfyUI was right there was told "unreachable" with nothing to act on.
+  assert.match(html, /id="healthDetail"/, 'the report needs somewhere on the page to live');
+  assert.match(html, /id="healthCheck"/);
+  assert.match(html, /id="healthCopy"/);
+  assert.match(html, /class="note report"/, 'lines, not one run-on sentence');
+
+  // The answer is kept, not recomputed from a single word.
+  assert.match(app, /state\.health = c;/);
+  assert.match(app, /function renderHealthDetail\(\)/);
+  assert.match(app, /function healthReportText\(\)/);
+  const report = app.slice(app.indexOf('function healthReportText'), app.indexOf('function renderHealthDetail'));
+  for (const part of ['c.host', 'c.state', 'c.problem', 'c.error', 'c.hint']) {
+    assert.ok(report.includes(part), `the report carries ${part}`);
+  }
+
+  // The dot itself: tapping it is the only always-available route to the detail,
+  // so it must open Settings and scroll there rather than doing nothing on touch.
+  const dot = app.slice(app.indexOf("$('healthBtn').onclick"), app.indexOf("$('healthCheck').onclick"));
+  assert.match(dot, /\.tabbtn\[data-tab="settings"\]/, 'reuses the tab switcher, so loadSettings still runs');
+  assert.match(dot, /scrollIntoView/);
+  assert.match(dot, /healthDetail/);
+
+  // The classifier's own word reaches the dot, because "not comfyui" and
+  // "bad address" send you to a different box than "unreachable" does.
+  const health = app.slice(app.indexOf('async function refreshHealth'), app.indexOf('function healthReportText'));
+  assert.match(health, /text\.textContent = c\.state;/);
+  // ...and the tooltip is no longer the only carrier of the detail.
+  assert.match(health, /c\.error \|\| c\.problem \|\| /);
+  // A re-check without waiting for the poll, and a way to get the text out.
+  assert.match(app, /\$\('healthCheck'\)\.onclick/);
+  assert.match(app, /copyText\(healthReportText\(\)\)/);
+  // pre-wrap, or every line but the last runs together.
+  assert.match(fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8'), /\.note\.report \{[^}]*white-space: pre-wrap/);
+});
+
 test('the server has a route for every api path the page calls', () => {
   const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
   // Paths built at runtime (`/api/jobs/${id}/cancel`) are not literals and are

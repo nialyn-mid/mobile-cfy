@@ -61,9 +61,19 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
     next: 0,
     pending: new Map(),
     running: new Set(),
+    foreign: [],
+    foreignNext: 0,
     history: new Map(),
     uploads: [],
     stall: null,
+    queueFail: false,
+    // /system_stats impersonators: a login page, a proxy refusal, a dead
+    // socket that answers anyway. The health classifier tells these apart, so
+    // the suite has to be able to produce each one.
+    statsBody: null,
+    statsStatus: 200,
+    statsDelayMs: 0,
+    authFail: false,
   };
 
   const entryFor = (n, prompt) => ({
@@ -84,6 +94,10 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
       res.writeHead(code, { 'Content-Type': type });
       res.end(typeof body === 'string' || Buffer.isBuffer(body) ? body : JSON.stringify(body));
     };
+
+    // A ComfyUI behind ComfyUI-Login that no longer believes the token. Every
+    // path, because that is what the extension does.
+    if (state.authFail) return send(401, { error: 'no' });
 
     if (req.method === 'POST' && url.pathname === '/prompt') {
       readJson(req).then((body) => {
@@ -128,6 +142,9 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
         });
         return;
       }
+      // A ComfyUI that answers everything except /queue. The runner has to treat
+      // this as "cannot tell", never as "the queue is empty".
+      if (state.queueFail) return send(500, { error: 'queue unavailable' });
       // ComfyUI really does separate the two lists, and so must the fake: the
       // difference between "queued" and "running" is the whole reason the run
       // timer does not start at submit.
@@ -155,7 +172,16 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
 
     if (url.pathname === '/view') return send(200, PNG, 'image/png');
     if (url.pathname === '/system_stats') {
-      return send(200, { system: { comfyui_version: '0.3.0-test', devices: [] } });
+      // `statsBody` is how the suite reproduces the failure that has no status
+      // to give it away: a 200 whose body is a login page. JSON.parse says
+      // "Unexpected token <" and the address is innocent.
+      const reply = () =>
+        state.statsBody
+          ? send(state.statsStatus, state.statsBody, 'text/html; charset=utf-8')
+          : send(state.statsStatus, { system: { comfyui_version: '0.3.0-test', devices: [] } });
+      if (state.statsDelayMs) setTimeout(reply, state.statsDelayMs);
+      else reply();
+      return;
     }
     send(404, { error: 'not found' });
   });
@@ -183,6 +209,29 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
         /** Prompts handed over but not begun yet, in queue order. */
         held: () => [...state.pending.keys()].filter((id) => !state.running.has(id)),
         ids: () => state.prompts.map((p) => p.id),
+        /**
+         * Work another client put in ComfyUI's queue - the shape the runner has
+         * to notice before adding a prompt of its own. These ids are in nobody's
+         * job, which is exactly how a second device's work looks from here.
+         */
+        foreign(n = 1) {
+          for (let i = 0; i < n; i += 1) {
+            const id = `x${++state.foreignNext}`;
+            state.pending.set(id, ++state.next);
+            state.running.add(id);
+            state.foreign.push(id);
+          }
+          return state.foreign.slice();
+        },
+        /** ...and that other client finishing, which frees the queue. */
+        clearForeign() {
+          for (const id of state.foreign) {
+            state.pending.delete(id);
+            state.running.delete(id);
+          }
+          state.foreign.length = 0;
+        },
+        foreignIds: () => state.foreign.slice(),
         /** Hold the next /prompt ANSWER back until the returned gate is released. */
         stallNext() {
           let release = () => {};

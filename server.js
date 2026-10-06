@@ -15,7 +15,7 @@ import {
   DEFAULTS,
   resolveFrom,
 } from './lib/config.js';
-import { ComfyClient, AuthError, mimeFor } from './lib/comfy.js';
+import { ComfyClient, comfyHealth, mimeFor } from './lib/comfy.js';
 import { parseMultipart } from './lib/multipart.js';
 import { saveUpload, findUpload, listUploads, sniffImage } from './lib/uploads.js';
 import * as history from './lib/history.js';
@@ -172,31 +172,18 @@ startRetryTicker(() => new ComfyClient());
 
 route('GET', '/api/health', async (req, res) => {
   const client = new ComfyClient();
-  const body = {
+  json(res, 200, {
     ok: true,
     server: { root: P.root },
     token: { configured: client.hasToken, source: path.basename(envFilePath()) },
-    comfy: { host: config().comfy.host, port: config().comfy.port, state: 'unknown' },
+    // Classified, with a hint: "unreachable" alone sent people looking in the
+    // wrong place when the real fault was a login page or a pasted scheme.
+    comfy: await comfyHealth(client),
     downloadDir: { path: P.downloadDir, exists: fs.existsSync(P.downloadDir) },
     // Carried here because this is the poll the page already makes: it is how
     // the UI learns that a queue paused for the network is worth resuming again.
     queue: runner.queueState(),
-  };
-  if (!client.hasToken) body.comfy.state = 'no-token';
-  else {
-    try {
-      const stats = await client.systemStats({ timeoutMs: 8000 });
-      body.comfy.state = 'ok';
-      body.comfy.info = {
-        comfyui: stats?.system?.comfyui_version,
-        devices: (stats?.devices ?? []).map((d) => d.name),
-      };
-    } catch (e) {
-      body.comfy.state = e instanceof AuthError || e.status === 401 ? 'unauthorized' : 'unreachable';
-      body.comfy.error = e.message;
-    }
-  }
-  json(res, 200, body);
+  });
 });
 
 route('POST', '/api/auth/reload', async (req, res) => {

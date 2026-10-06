@@ -55,6 +55,10 @@ const state = {
   // picture belongs to.
   upImage: null,                  // null | { uploadId } | { ref }
   upImageUrl: null,
+  // The last GET /api/health answer. Kept so the Settings tab can print the
+  // whole report - state, address, the server's own error text and the hint -
+  // instead of leaving it in a tooltip nobody on a phone will ever see.
+  health: null,
 };
 
 const MAX_SLOTS = 4;
@@ -119,6 +123,7 @@ async function refreshHealth() {
   try {
     const h = await api('/api/health');
     const c = h.comfy;
+    state.health = c;
     if (h.queue) applyQueue(h.queue);
     if (c.state === 'ok') {
       // ComfyUI answers again while a queue is still held for the network. Say
@@ -144,13 +149,50 @@ async function refreshHealth() {
       text.textContent = 'no token';
     } else {
       dot.className = 'dot warn';
+      // The classifier's own word, not a vague one: "not comfyui" and
+      // "bad address" send you to the right box, "unreachable" sends you to
+      // the router.
       text.textContent = c.state;
     }
-    $('healthBtn').title = c.error || `${c.host}:${c.port}`;
+    $('healthBtn').title = c.error || c.problem || `${c.host}:${c.port}`;
+    renderHealthDetail();
   } catch (e) {
     dot.className = 'dot bad';
     text.textContent = stopping ? 'server stopped' : 'server offline';
   }
+}
+
+/**
+ * The whole "what did the server see" report, in the open.
+ *
+ * The error used to live only in the dot's `title` attribute, which no phone
+ * ever shows and no thumb can hover. Every one of these faults is a settings
+ * problem, and the Settings tab is where settings live - so the detail belongs
+ * there, written out, copyable, next to the two boxes that cause most of them.
+ */
+function healthReportText() {
+  const c = state.health;
+  if (!c) return 'not checked yet';
+  const bits = [`${c.host ?? '?'}:${c.port ?? '?'} — ${c.state}`];
+  if (c.state === 'ok') {
+    const i = c.info ?? {};
+    bits.push(`ComfyUI ${i.comfyui ?? '?'}${i.devices?.length ? ` on ${i.devices.join(', ')}` : ''}`);
+  }
+  if (c.problem) bits.push(c.problem);
+  if (c.error) bits.push(c.error);
+  if (c.hint) bits.push(c.hint);
+  bits.push(`checked ${new Date(c.checkedAt ?? Date.now()).toLocaleTimeString()}`);
+  return bits.join('\n');
+}
+
+function renderHealthDetail() {
+  const el = $('healthDetail');
+  if (!el) return;
+  const c = state.health;
+  el.textContent = healthReportText();
+  // A wrong box is worth shouting about; an idle server is not.
+  el.classList.toggle('bad', Boolean(c) && c.state !== 'ok');
+  el.classList.toggle('warn', Boolean(c) && c.state === 'ok');
 }
 
 // -------------------------------------------------------------------- tabs
@@ -476,6 +518,8 @@ function updateUpMath() {
   const h = parseInt($('upTargetHeight').value, 10);
   const toDim = $('upScaleToDim').checked;
   const seedRaw = $('upSeed').value.trim();
+  const batch = parseInt($('upBatch').value, 10);
+  const n = Number.isInteger(batch) && batch > 1 ? batch : 1;
   const bits = [];
   if (!state.upImage) bits.push('pick an image first');
   if (toDim && Number.isFinite(w) && Number.isFinite(h)) {
@@ -486,10 +530,14 @@ function updateUpMath() {
     bits.push(`each side ×${trimNum(scale)}`);
   }
   if (seedRaw) bits.push(`seed ${seedRaw} pinned`);
+  if (n > 1) bits.push(`${n} images from one pass`);
   const out = [];
   out.push(bits.join(' · ') || 'one image in, one image out');
   if (toDim && Number.isFinite(w) && Number.isFinite(h)) {
     out.push('A multiplier of ' + trimNum(scale) + ' is not used while the target size is on.');
+  }
+  if (n > 1) {
+    out.push(`The ${n} are sampled together, so the noise is different for each - but they all sit in memory at the target size at once, so a big size and a big batch together can run the card out of memory.`);
   }
   setText('upMath', out.join(' '));
 }
@@ -498,7 +546,7 @@ function trimNum(n) {
   return String(Number(Number(n).toFixed(2)));
 }
 
-for (const id of ['upScale', 'upTargetWidth', 'upTargetHeight', 'upSeed']) {
+for (const id of ['upScale', 'upTargetWidth', 'upTargetHeight', 'upSeed', 'upBatch']) {
   $(id).addEventListener('input', updateUpMath);
   $(id).addEventListener('change', updateUpMath);
 }
@@ -520,6 +568,10 @@ on('helpUpSeed', (e) => {
   e.preventDefault();
   toast('blank picks a fresh seed - pin one to get the same upscale again');
 });
+on('helpUpBatch', (e) => {
+  e.preventDefault();
+  toast('how many images one pass produces - the graph samples them together, so 4 costs about the same wall clock as 1 but four times the VRAM at the target size');
+});
 
 on('upscale', async () => {
   showError(null);
@@ -538,10 +590,29 @@ on('upscale', async () => {
         // The string goes up untouched so the server can refuse junk with a real
         // message, instead of this page quietly rounding it into a number.
         seed: seedRaw === '' ? null : seedRaw,
+        batch: $('upBatch').value,
         collectImages: $('upDownload').checked,
       }),
     });
     trackJob(job);
+    // The same rule as the Generate tab, one field over: clear what belongs to
+    // THIS job, keep the settings. The picture is the upscale's prompt - the
+    // thing being worked on - so it must not still be armed when the next one
+    // is submitted, and the guidance is a note about that same picture. The
+    // scale, the target size, the batch and the download toggle are settings:
+    // upscaling the next photo at the same settings is the whole point.
+    const cleared = [];
+    if (state.upImage) {
+      setUpImage(null);
+      cleared.push('image');
+    }
+    if ($('upGuidance').value.trim() !== '') {
+      $('upGuidance').value = '';
+      autoGrow($('upGuidance'));
+      cleared.push('guidance');
+    }
+    saveForm();
+    if (cleared.length) toast(`${cleared.join(' and ')} cleared`);
   } catch (e) {
     if (!showBindingError(e)) showError(e.errors ? e.errors.join('\n') : e.message);
   } finally {
@@ -663,7 +734,7 @@ const FORM_IDS = [
   // leave out the same things: the seed and the guidance belong to one image, and
   // a pinned seed that survives a reload would quietly re-use itself on the next
   // picture.
-  'upScale', 'upScaleToDim', 'upTargetWidth', 'upTargetHeight', 'upDownload',
+  'upScale', 'upScaleToDim', 'upTargetWidth', 'upTargetHeight', 'upDownload', 'upBatch',
 ];
 
 // The workflow's own combo values for node 9 "Resolution Selector". A COMBO
@@ -914,7 +985,11 @@ function renderQueue() {
       // in ComfyUI's queue is still being worked on up there, and this app is
       // only waiting to start watching it again.
       const submitted = j.runs.filter((r) => r.promptId && r.status !== 'done' && r.status !== 'error').length;
-      meta.textContent = `paused · ${j.summary.done}/${j.summary.total} runs`
+      // A row that says only "paused" makes the user guess. The two holds have
+      // very different meanings - the network, or somebody else's job in
+      // ComfyUI - and the full sentence lives in the strip below the list.
+      meta.textContent = (/busy/i.test(j.error ?? '') ? `paused · waiting for ComfyUI's queue` : 'paused')
+        + ` · ${j.summary.done}/${j.summary.total} runs`
         + (submitted ? ` · ${submitted} at ComfyUI` : '');
       row.append(dot, text, meta);
     } else {
@@ -954,18 +1029,30 @@ function renderQueue() {
   toggle.textContent = paused ? '▶ resume queue' : 'pause queue';
   toggle.classList.toggle('primary', paused);
   toggle.classList.toggle('ghost', !paused);
+  toggle.title = paused && q.reason === 'busy'
+    ? 'try now - it will hold again if ComfyUI is still busy (it starts by itself anyway)'
+    : '';
   const send = $('queueSubmitAll');
-  send.disabled = handoff === 0 || paused;
+  // A hold for ComfyUI's OWN queue is the one pause "send all" is the answer to -
+  // handing the work over is precisely what the hold was avoiding - so the button
+  // has to stay live there. It stays dead for a lost connection, where sending
+  // would fail anyway.
+  const busyHold = paused && q.reason === 'busy';
+  send.disabled = handoff === 0 || (paused && !busyHold);
   send.title = handoff === 0
     ? 'nothing left to hand over'
-    : `submit every remaining run of ${handoff} job${handoff > 1 ? 's' : ''} to ComfyUI now`;
+    : busyHold
+      ? 'skip the wait and queue this behind ComfyUI\'s current work'
+      : `submit every remaining run of ${handoff} job${handoff > 1 ? 's' : ''} to ComfyUI now`;
 
   const note = $('queuePaused');
   note.hidden = !paused;
   if (paused) {
     note.textContent = q.reason === 'connection'
       ? `paused — ComfyUI is not answering (${q.message || 'no connection'}). ${q.waiting ?? 0} job(s) held here; press resume when you are back on the network.`
-      : `paused — ${q.waiting ?? 0} job(s) held here. Press resume to carry on.`;
+      : busyHold
+        ? `held — ${q.message || 'ComfyUI is busy with work this app did not send'}. ${q.waiting ?? 0} job(s) wait here and start on their own as soon as it is free — or press send all to queue up behind it now.`
+        : `paused — ${q.waiting ?? 0} job(s) held here. Press resume to carry on.`;
   }
   // Both submit buttons offer the queue, because both share it.
   setText('generate', busy.length ? 'Add to queue' : 'Generate');
@@ -1433,6 +1520,7 @@ function renderHistory() {
       // "enhance on / turbo / megapixels" chips.
       chip('upscale', true);
       chip(s.scaleToDim ? `target ${s.targetWidth} × ${s.targetHeight}` : `×${trimNum(s.scale ?? 1)}`, true);
+      if ((s.batch ?? 1) > 1) chip(`${s.batch} images in one pass`, true);
       if (s.guidance) chip('extra guidance', false);
       if (s.collectImages === false) chip('no downloads', false);
       if (s.seed !== null && s.seed !== undefined) chip(`seed pinned: ${s.seed}`, true);
@@ -1738,6 +1826,7 @@ function restoreUpscaleHistory(entry) {
   $('upTargetHeight').value = s.targetHeight ?? '';
   $('upGuidance').value = s.guidance ?? '';
   $('upSeed').value = s.seed === null || s.seed === undefined ? '' : String(s.seed);
+  $('upBatch').value = s.batch ?? 1;
   $('upDownload').checked = s.collectImages !== false;
 
   const slot = (entry.slots ?? []).find(Boolean);
@@ -2050,6 +2139,7 @@ async function loadSettings() {
     $('cfgTextNodes').value = (body.config.promptTextNodes ?? []).join(', ');
     $('envNote').textContent = `token file: ${body.envFile}`;
     renderBindings(bindingsFor(bindKind()));
+    renderHealthDetail();
   } catch (e) { toast(e.message); }
 }
 
@@ -2313,6 +2403,26 @@ $('reloadToken').onclick = async () => {
     toast(r.tokenConfigured ? 'token reloaded' : 'no token found in ' + r.file);
     await refreshHealth();
   } catch (e) { toast(e.message); }
+};
+
+// The dot is the only always-visible health signal, so it has to be the way to
+// the detail rather than a tooltip. Reuses the tab switcher so opening Settings
+// still runs loadSettings(), and then scrolls the report into view - the dot is
+// in the top bar and the card is far down the page.
+$('healthBtn').onclick = () => {
+  document.querySelector('.tabbtn[data-tab="settings"]')?.click();
+  $('healthDetail')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+};
+
+$('healthCheck').onclick = async () => {
+  const el = $('healthDetail');
+  el.textContent = 'checking…';
+  await refreshHealth();
+};
+
+$('healthCopy').onclick = async () => {
+  const ok = await copyText(healthReportText());
+  toast(ok ? 'report copied' : 'copy failed');
 };
 
 // ------------------------------------------------------------ server control

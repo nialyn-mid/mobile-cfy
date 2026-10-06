@@ -772,6 +772,42 @@ test('guidance is added after the graph own instruction, and a blank box changes
   );
 });
 
+test('a batch of N is the encoder batch size, and the graph has no other place to put it', () => {
+  // 506's output 2 IS the latent that 541/542 sample and 491/508 save, so this one
+  // number is the whole batch. If it were N separate runs instead, the two
+  // samplers would each pay the model load and the text encode again per image.
+  const node = UP[String(UB.batch.node)];
+  assert.equal(node.class_type, 'QwenImage21TextEncodeList');
+  assert.equal(UB.batch.input, 'batch_size');
+  assert.deepEqual(node.inputs.latent_image, undefined, 'no latent input of its own');
+  assert.deepEqual(UP['541'].inputs.latent_image, ['506', 2], 'the first sampler reads 506 output 2');
+  assert.deepEqual(UP['542'].inputs.latent_image, ['541', 0], 'the second samples what the first left');
+  assert.deepEqual(UP['491'].inputs.samples, ['542', 0]);
+  assert.deepEqual(UP['508'].inputs.images, ['491', 0]);
+  assert.equal(
+    Object.keys(UP).some((id) => /RepeatLatentBatch|EmptyLatentImage/.test(UP[id].class_type)),
+    false,
+    'a latent batch node would mean the encoder is not the only place to write it',
+  );
+
+  assert.equal(upPayload()[String(UB.batch.node)].inputs[UB.batch.input], 1, 'default is one image');
+  assert.equal(upPayload({ batch: 4 })[String(UB.batch.node)].inputs[UB.batch.input], 4);
+});
+
+test('the upscale batch is a whole number in range, and blank means one', () => {
+  assert.equal(validateUpscale(UPK()).batch, 1);
+  assert.equal(validateUpscale(UPK({ batch: '' })).batch, 1, 'the page sends a string');
+  assert.equal(validateUpscale(UPK({ batch: null })).batch, 1);
+  assert.equal(validateUpscale(UPK({ batch: '3' })).batch, 3);
+
+  for (const bad of [0, -2, 9, 1.5, 'lots', NaN, Infinity, true]) {
+    const r = validateUpscale(UPK({ batch: bad }));
+    assert.equal(r.ok, false, `${JSON.stringify(bad)} should not be a batch`);
+    assert.match(r.errors.join('; '), /batch must be a whole number between 1 and 8/);
+    assert.equal(r.batch, 1, 'and it falls back to one image rather than staying broken');
+  }
+});
+
 test('the payload is a copy - the workflow file itself is never touched', () => {
   const before = JSON.stringify(UP);
   upPayload({ scale: 4, seed: 9, scaleToDim: true, targetWidth: 1000, targetHeight: 1000, guidance: 'g' });

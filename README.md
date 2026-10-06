@@ -140,6 +140,7 @@ A second workflow (`upscale_api.json`) with one job per image and one run each:
 | Scale to a target size | Node `526`. On = ignore the multiplier and aim for the two dimensions below |
 | Target width / height | Nodes `528` / `529`, each 64–8192. Only read when the switch above is on, so they are greyed out until you turn it on |
 | Guidance | Node `544`. **Added** to the workflow's own instruction (node `522`, "Enhance this image to high resolution…") rather than replacing it, so a phrase like "keep the film grain" steers the run without having to retype the base instruction |
+| Batch | Node `506`'s `batch_size`: how many images **one pass** produces, 1–8. Different from the Generate tab's batch, which is N separate runs — see below |
 | Seed | Blank = random. A number pins it, exactly as on the Generate tab |
 | Download | Whether the result is saved to your download folder |
 
@@ -154,6 +155,25 @@ target on a 1000 × 1000 source scales by 2.45, not by 3 and 2 separately.
 > `530` stays its own editable binding, which is what keeps the "every node id is
 > configurable" promise honest.
 
+**Upscale batch is a batch of latents, not a batch of jobs.** The only batch knob in
+the graph is node `506`'s `batch_size`, and it is a big one: its output 2 *is* the
+latent that both samplers work on and the decoder saves, so `4` means four images
+out of a single pass. That is deliberately not the Generate tab's arrangement,
+where `batch` is N separate runs:
+
+- **Why not N runs:** an upscale pass is minutes of GPU time, and N runs would pay
+  the model load, the text encode and the VAE again for every image. One prompt
+  with a batched latent shares all of it — 4 images cost about the same wall clock
+  as 1.
+- **The images are still different.** ComfyUI offsets the noise per batch element,
+  so a pinned seed gives you four variations of the same source rather than four
+  copies of one picture.
+- **The cost is VRAM, not time.** Every one of them sits in memory at the target
+  size at once, so a big target and a big batch together can run a small card out.
+  The note under the inputs says as much; start at 2 if a run fails.
+- It is still one job and one run, so cancelling, timing, the queue and the gallery
+  all behave exactly as they do at 1 — the thumbs just show N pictures.
+
 Both tabs share **one queue**, because ComfyUI has one GPU and one queue: an
 upscale waiting behind a shuffle holds up the next generate, and the queue bar,
 the pause/send-all controls, cancel, per-run timers and shutdown handover all
@@ -161,13 +181,22 @@ appear on both tabs. Upscale rows are marked `⤒`, and so are their gallery gro
 and history entries.
 
 Upscaling one image per job is deliberate — the workflow has a single LoadImage —
-so upscaling four pictures means four jobs. They queue like anything else.
+so upscaling four pictures means four jobs. They queue like anything else, and
+they wait for ComfyUI's own queue exactly like anything else (see *When ComfyUI is
+busy with somebody else's work*).
+
+**Pressing `Upscale` clears the picture and the guidance**, the same way `Generate`
+clears the prompt, the postprompt and the reference images: those three describe
+*this* job, and leaving them armed would silently run the *next* one against the
+wrong image. The scale, the target size, the batch and the download toggle are
+settings and stay put — upscaling the next photo the same way is the whole point
+of a separate tab. A toast says what was cleared. History puts it all back.
 
 Under the hood it is `POST /api/upscale` with
 `{slots:[{uploadId}], scale, scaleToDim, targetWidth, targetHeight, guidance, seed,
-collectImages}` returning `202` and a normal job object — the same shape a generate
-returns, so everything downstream (queue, events, cancel, gallery, history) needed
-no new code. The graph itself is read and replaced through
+batch, collectImages}` returning `202` and a normal job object — the same shape a
+generate returns, so everything downstream (queue, events, cancel, gallery,
+history) needed no new code. The graph itself is read and replaced through
 `GET`/`PUT /api/upscale/workflow`, which never touches `workflow_api.json`.
 
 The upscale graph is checked before a job is accepted, exactly like the generate
@@ -204,9 +233,10 @@ Two details worth knowing:
   number by hand is never necessary. Entries with no seed of their own (older
   rows, or ones still queued) show nothing there rather than an empty box.
 - Upscale entries are marked `⤒`, carry their own chips (`×2`, `target 3000 × 2000`,
-  `extra guidance`), and are the one thing in History that reopens the **Upscale**
-  tab instead of Generate — multiplier, target size, guidance, seed and download
-  toggle all come back, along with the image itself when the gallery still has it.
+  `4 images in one pass`, `extra guidance`), and are the one thing in History that
+  reopens the **Upscale** tab instead of Generate — multiplier, target size, batch,
+  guidance, seed and download toggle all come back, along with the image itself
+  when the gallery still has it.
 
 ### What the app remembers
 
@@ -216,9 +246,9 @@ reload and a phone restart:
 - **Toggles and run settings** — enhance, turbo, consistency, save-images, steps,
   encoder resolution, megapixels, suggested aspect, aspect ratio, batch, shuffle,
   prompt refresh, and on the Upscale tab the multiplier, the target-size switch,
-  both target dimensions and the download toggle. Your last choices come back
-  exactly as they were. The *config.json* defaults in Settings only apply on a first
-  run, or if you clear site data.
+  both target dimensions, the batch count and the download toggle. Your last
+  choices come back exactly as they were. The *config.json* defaults in Settings
+  only apply on a first run, or if you clear site data.
 - **Which gallery jobs are folded** away.
 - **Not remembered on purpose:** the prompt text (that is History's job), the
   **postprompt**, the reference images (they point at one-shot upload handles
@@ -235,10 +265,13 @@ postprompt box does the same, half as tall to start with.
 Pressing Generate clears the prompt, the **postprompt** and any reference images
 you attached. All three belong to the prompt you just submitted — leaving them
 armed would quietly append yesterday's tail, or turn the next unrelated prompt
-into an image-to-image job.
+into an image-to-image job. Pressing **Upscale** does the same for the picture and
+the guidance, which belong to the image that was just submitted.
 
 **Settings** tab covers the ComfyUI host, the download folder, the filename
-template, and every node binding. A **Generate / Upscale** switch above the
+template, and every node binding. Its **ComfyUI link** card is the written
+version of the dot in the corner — tap the dot and it lands there; see *The dot
+in the corner, and what it actually saw*. A **Generate / Upscale** switch above the
 binding table picks which set you are editing and which graph **check bindings**
 and the node list read, so the two never get mixed up. **Check bindings**
 validates all of them against the workflow at once, and every row shows its own
@@ -305,6 +338,31 @@ you wait for it.
 A finished run's clock stops where it finished. A run that was dropped from
 ComfyUI's queue before it ever began has no clock, because it never generated.
 
+### The dot in the corner, and what it actually saw
+
+The top-right dot polls ComfyUI every few seconds and shows one word. Because one
+word is rarely enough, **tapping the dot opens Settings and scrolls to the
+`ComfyUI link` card**, which writes the whole thing out — the address that was
+dialled, the server's own error text, and the next step — with a `copy report`
+button and a `⟳ check again` button so you do not have to wait for the poll.
+
+Each fault has its own word, because `unreachable` used to cover all of them and
+four of the five are not outages:
+
+| The dot says | It means | Do this |
+|---|---|---|
+| `bad address` | the host box cannot be dialled at all — a pasted `http://`, a `:8188` in the host box, a path, a space, a bare IPv6 | fix the Host / Port boxes; the message names which one |
+| `no token` | there is no `token=` line in the `.env` | copy it out of the ComfyUI console, then `⟳ reload token from .env` |
+| `auth failed` | ComfyUI answered and refused the token | `⟳ reload token from .env`; **restart ComfyUI first** if its password changed — ComfyUI caches the token at startup |
+| `slow` | up, but nothing came back inside the wait (8s by default, `comfy.healthTimeoutMs`) | wait, or check whether it is still starting up / loading models |
+| `unreachable` | nothing answered at that address | check the host and port, and that ComfyUI listens on `0.0.0.0`, not `127.0.0.1` |
+| `not comfyui` | something answered with a **web page** instead of ComfyUI — usually the ComfyUI-Login screen | check the port; if the page is a login screen, reload the token |
+| `http 403` / `http 500` / … | something answered, with a refusal | usually a proxy, or a port that is not ComfyUI |
+
+`GET /api/health` returns the same report as `comfy: {host, port, state, error,
+hint, problem, checkedAt}` — so `curl -s http://127.0.0.1:3081/api/health` in
+Termux shows the same lines the card does, without touching the browser.
+
 ### Walking off the network
 
 Two buttons appear next to the queue strip while there is anything in flight:
@@ -333,9 +391,31 @@ Resume is always a deliberate tap. When the health check notices ComfyUI is back
 the dot turns amber and says `back online` with a `press resume` toast — it will
 not start four generations behind your back just because a ping succeeded.
 
-`send all to ComfyUI` is disabled while the queue is held (there is nowhere to
-send it to yet); the pause bar stays visible even over an empty queue, because
-the resume button is the only way back out of a pause.
+`send all to ComfyUI` is disabled while the queue is held for a lost connection
+(there is nowhere to send it to yet); the pause bar stays visible even over an
+empty queue, because the resume button is the only way back out of a pause.
+
+### When ComfyUI is busy with somebody else's work
+
+A second hold, and the one that is not about you at all. ComfyUI has one queue
+per machine, so a generation started from another device — another browser, or the
+ComfyUI page itself — is sitting in front of yours without this app knowing. Before
+a job submits anything of its own, the app looks at ComfyUI's queue once:
+
+- **Prompts it did not send are there** → the job waits here, in the open, and the
+  strip says `held — ComfyUI is busy with … this app did not send`, naming how many
+  are in the queue and how many of your jobs are waiting. It starts by itself the
+  moment that queue empties — nobody has to watch the page or tap resume.
+- **Prompts it did send are there** → nothing happens, because that is this app's
+  own work waiting its turn. It never holds itself behind itself.
+- **The queue cannot be read** → the job runs anyway. A `/queue` that failed to
+  answer is not proof that the queue is empty, but it is not proof that it is busy
+  either, and refusing to start would strand the phone over a blip.
+
+Nothing of yours reaches ComfyUI while it waits: no prompt id, no seed burnt, no
+half-submitted job. If you would rather not wait at all, `send all to ComfyUI`
+stays enabled during this hold — queuing up behind that work is exactly what it
+does — and the hold lifts as soon as the work is handed over.
 
 Both buttons are also plain endpoints, if you would rather use them from a
 script: `GET /api/queue`, `POST /api/queue/pause`, `POST /api/queue/resume`,
@@ -458,6 +538,7 @@ are editing and which graph the checks and the node list read, and
 | `targetWidth` | `528.value` | Target Width |
 | `targetHeight` | `529.value` | Target Height |
 | `guidance` | `544.value` | Guidance Prompt |
+| `batch` | `506.batch_size` | Text Encode Qwen Image 2.1 (List) |
 | `seed` | `536.seed` | Seed |
 
 The two maps are independent in every direction: `POST /api/config/validate` and
@@ -637,12 +718,28 @@ this happens to a job of its own.
 connection while the phone was asleep; the UI falls back to polling on its own.
 The job itself is unaffected.
 
+**The dot says something other than a version number.** Tap it — it opens the
+`ComfyUI link` card in Settings, which prints the address that was dialled, the
+server's own error and the next step, and has a `copy report` button. The table
+in *The dot in the corner, and what it actually saw* maps each word to its fix. A
+common one on a phone: ComfyUI bound to `127.0.0.1` answers the phone itself but
+not the LAN, so the host box needs the PC's address and ComfyUI needs
+`--listen 0.0.0.0`.
+
 **The queue says `paused` and nothing is happening.** ComfyUI stopped answering,
 so the queue held itself instead of failing every run one by one. Nothing is lost
 — press `▶ resume queue` when the server is reachable again, or `send all to
 ComfyUI` if you would rather hand the work over first. If the server was
 restarted, the in-memory queue is empty by definition (see *Walking off the
 network*).
+
+**The queue says `held` and the wait looks unending.** That is the other pause:
+ComfyUI is busy with prompts this app never sent, most likely from another device
+on the same server. Your jobs wait in the open rather than disappearing into
+ComfyUI's queue, and they start on their own the moment it empties — check the
+other device (or a ComfyUI tab) rather than pressing resume. `send all to ComfyUI`
+is enabled here on purpose: it is the way to stop waiting. See *When ComfyUI is
+busy with somebody else's work*.
 
 **Generation is slow.** The prompt enhancer runs a Qwen3-VL model and dominates
 runtime — minutes per run is normal. Turn it off for a much faster turnaround.
@@ -682,8 +779,12 @@ and every API path it calls is registered in `server.js` — the queue — bulk 
 an auto-paused queue, offline building, resume, cancel, the run-timer start, a
 pinned seed, a postprompt written verbatim and recorded on the row, and an upscale
 job sharing the queue with a generate — the Upscale tab's HTTP
-surface end to end, the download-retry sweep, the run-timer format, focal-point
-zoom math, and the shut down route. 211 of them; they need no network and no real
+surface end to end (including a batch of 4 landing in node 506 as one prompt),
+the download-retry sweep, the run-timer format, focal-point
+zoom math, the hold for somebody else's work in ComfyUI's queue, every health
+answer (no answer, a slow answer, a login page, a refusal, a nonsense address),
+and the shut down
+route. 235 of them; they need no network and no real
 ComfyUI (`test/queue.test.js`, `test/retry.test.js`, `test/shutdown.test.js` and
 `test/upscale.test.js` each run a fake ComfyUI from the shared
 `test/helpers/fakeComfy.js`). Every temp root a test creates is deleted again, so

@@ -139,6 +139,42 @@ test('an upscale is queued, tracked and cancelled like any other job', async (t)
   assert.equal(row.settings.kind, 'upscale');
 });
 
+test('a batch of N is one prompt asking for N images, not N prompts', async (t) => {
+  const comfy = await startFakeComfyUI({ mode: 'manual', saveNode: 508, textNode: null });
+  t.after(() => comfy.close());
+  await boot(t, comfy.port);
+
+  const fd = new FormData();
+  fd.append('file', new Blob([PNG], { type: 'image/png' }), 'tiny.png');
+  const up = await fetch(`${base}/api/uploads`, { method: 'POST', body: fd }).then((r) => r.json());
+
+  // The string is what the number input actually sends; the server parses it.
+  const job = await post('/api/upscale', {
+    slots: [{ uploadId: up.uploads[0].id }],
+    scale: 2,
+    batch: '4',
+  });
+  assert.equal(job.status, 202, `${JSON.stringify(job.body)}\n${log}`);
+  assert.equal(job.body.spec.batch, 4);
+  assert.equal(job.body.runs.length, 1, 'one pass produces the images, so there is still one run');
+  assert.match(job.body.spec.prompt, /×2 ×4 images$/, 'the queue row says how many are coming');
+
+  for (let i = 0; i < 50 && comfy.state.prompts.length < 1; i++) await sleep(100);
+  assert.equal(comfy.state.prompts.length, 1, `exactly one prompt goes to ComfyUI:\n${log}`);
+  assert.equal(comfy.state.prompts[0].payload['506'].inputs.batch_size, 4, 'and it is node 506 that is told');
+
+  // Junk is refused with a message, not rounded into something the user did not ask for.
+  for (const bad of [0, 9, 'lots', 1.5]) {
+    const r = await post('/api/upscale', { slots: [{ uploadId: up.uploads[0].id }], scale: 2, batch: bad });
+    assert.equal(r.status, 400, `batch=${JSON.stringify(bad)} must be refused: ${JSON.stringify(r.body)}`);
+    assert.match(r.body.error, /batch must be a whole number between 1 and 8/);
+  }
+  assert.equal((await get('/api/jobs')).jobs.length, 1, 'the four bad requests queued nothing');
+
+  const row = (await get('/api/history?limit=10')).entries.find((e) => e.jobId === job.body.id);
+  assert.equal(row.settings.batch, 4, 'history remembers it, so the row restores it');
+});
+
 test('a broken upscale binding is refused, and does not block a generate', async (t) => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
   t.after(() => comfy.close());
@@ -178,7 +214,7 @@ test('the upscale bindings can be reset without touching the generate ones', asy
   const reset = await post('/api/config/bindings/reset', { kind: 'upscale' });
   assert.equal(reset.body.kind, 'upscale');
   assert.equal(reset.body.ok, true, JSON.stringify(reset.body.bindings));
-  assert.equal(reset.body.bindings.length, 8);
+  assert.equal(reset.body.bindings.length, 9);
   assert.deepEqual(reset.body.config.upscaleBindings.scale, { node: '517', input: 'value' });
   assert.deepEqual(reset.body.config.bindings.seed, { node: '37', input: 'noise_seed' }, 'the generate map is left alone');
 

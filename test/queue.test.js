@@ -611,3 +611,124 @@ test('an upscale with no image is refused before anything is queued', () => {
     dropRoot(root);
   }
 });
+
+test("ComfyUI's own work holds a new job instead of queueing behind it", async () => {
+  // Another device on the same ComfyUI is mid-generation. That prompt is
+  // invisible from here until somebody looks at /queue.
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = useTempRoot(comfy.port);
+  try {
+    comfy.foreign(1);
+    const a = runner.enqueue(JOB('should wait its turn', 2));
+
+    const q = await waitFor(() => (runner.queueState().paused ? runner.queueState() : null), 'the hold');
+    assert.equal(q.reason, 'busy');
+    assert.match(q.message, /busy with a prompt this app did not send/);
+    assert.match(q.message, /another device/);
+    assert.equal(q.waiting, 1, 'the held job is kept at the front of the queue');
+
+    const snap = runner.get(a.id);
+    assert.equal(snap.status, 'paused');
+    assert.equal(snap.finishedAt, null, 'a held job has not finished');
+    // The whole point of holding rather than submitting: nothing of ours reached
+    // ComfyUI, no seed was burnt and no prompt id exists to chase later.
+    assert.equal(comfy.state.prompts.length, 0);
+    assert.equal(snap.runs.every((r) => r.promptId === null && r.seed === null), true);
+    assert.match(snap.error, /busy/i);
+
+    // ...and it starts by itself when that work ends. Nobody has to watch, and
+    // nobody has to tap resume.
+    comfy.clearForeign();
+    const stop = autoFinish(comfy);
+    await waitFor(() => runner.get(a.id).status === 'done', 'the held job to carry on by itself', 25000);
+    stop();
+
+    assert.equal(comfy.state.prompts.length, 2, 'both runs went once the queue was free');
+    assert.equal(runner.queueState().paused, false);
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('send all is the way past a hold for ComfyUI\'s own queue', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = useTempRoot(comfy.port);
+  try {
+    comfy.foreign(2);
+    const a = runner.enqueue(JOB('held anyway', 1));
+    const b = runner.enqueue(JOB('behind it', 1));
+    await waitFor(() => runner.queueState().paused, 'the hold');
+    assert.equal(runner.get(a.id).status, 'paused');
+    assert.equal(runner.get(b.id).status, 'queued');
+
+    const report = await runner.submitAll();
+    assert.equal(report.runs, 2, 'both jobs were handed over');
+    assert.deepEqual(report.failures, []);
+    assert.equal(
+      runner.queueState().paused,
+      false,
+      'the hold is gone: the work is already in ComfyUI, which is all the hold wanted',
+    );
+
+    // Ours went behind the other device's work, which is the whole bargain.
+    const q = await new ComfyClient().queueBusy();
+    assert.deepEqual(q.ids.slice(0, 2), comfy.foreignIds(), 'the other device still goes first');
+    assert.equal(q.ids.length, 4);
+
+    const stop = autoFinish(comfy);
+    await waitFor(() => runner.get(a.id).status === 'done', 'A to finish', 25000);
+    await waitFor(() => runner.get(b.id).status === 'done', 'B to finish', 25000);
+    stop();
+    assert.equal(comfy.state.prompts.length, 2, 'each job was submitted exactly once');
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test("the app's own prompts in ComfyUI's queue never hold the queue behind itself", async () => {
+  // The deadlock this check could have caused: a bulk submit leaves our prompts
+  // sitting in ComfyUI, and the next job would read them as somebody else's work
+  // and wait for a queue only we can empty.
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue(JOB('first', 2));
+    const b = runner.enqueue(JOB('second', 1));
+    await waitFor(() => comfy.state.prompts.length === 1, "A's first run");
+    await runner.submitAll();
+    assert.equal(runner.queueState().paused, false, 'our own queue is not foreign work');
+
+    const stop = autoFinish(comfy);
+    await waitFor(() => runner.get(a.id).status === 'done', 'A to finish', 25000);
+    await waitFor(() => runner.get(b.id).status === 'done', 'B to finish', 25000);
+    stop();
+    assert.equal(comfy.state.prompts.length, 3, '3 runs, each submitted exactly once');
+  } finally {
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('a queue probe that fails is not read as a busy queue', async () => {
+  // A ComfyUI that answers /prompt and /history but not /queue. "Cannot tell" is
+  // not "busy": holding on a failed read would strand the phone over a blip.
+  const comfy = await startFakeComfyUI({ mode: 'instant' });
+  const root = useTempRoot(comfy.port);
+  try {
+    comfy.state.queueFail = true;
+    const a = runner.enqueue(JOB('unreadable queue', 1));
+    await waitFor(() => runner.get(a.id).status === 'done', 'the job to run anyway', 25000);
+    assert.equal(comfy.state.prompts.length, 1);
+    assert.equal(runner.queueState().paused, false);
+  } finally {
+    comfy.state.queueFail = false;
+    cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
