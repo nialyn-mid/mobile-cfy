@@ -124,7 +124,10 @@
       </span>
     </div>
     <div id="upSlot" class="slots"></div>
-    <p class="note" id="upSlotNote" hidden></p>
+    <!-- Filled in from the thumbnail's own decoded size: what you picked, and
+         what the graph will make of it. Empty (and hidden) until the image has
+         loaded, so it never claims a size it did not read. -->
+    <p class="note dims" id="upSlotNote" hidden></p>
     <input id="upFilePick" type="file" accept="image/*" hidden>
   </div>
 
@@ -149,7 +152,7 @@
         <input type="number" id="upTargetHeight" value="2048" step="64" min="64" max="8192" inputmode="numeric">
       </label>
     </div>
-    <p class="note" id="upSizeNote" hidden></p>
+    <p class="note warn" id="upSizeNote" hidden></p>
   </div>
 
   <div class="card">
@@ -192,6 +195,7 @@
 <section class="tab active" data-for="generate upscale">
   <p class="note" id="queueHint" hidden></p>
   <p class="note warn" id="queuePaused" hidden></p>
+  <p class="note warn" id="queueSaved" hidden></p>
   <div class="btnrow" id="queueBar" hidden>
     <button id="queueToggle" class="btn ghost sm" type="button">pause queue</button>
     <button id="queueSubmitAll" class="btn ghost sm" type="button">send all to ComfyUI</button>
@@ -368,8 +372,8 @@
       <button class="btn ghost sm" id="lbReset" type="button">fit</button>
     </span>
     <button class="btn ghost sm" id="lbUse" type="button">⟳ add to prompt</button>
-    <button class="btn ghost sm" id="lbUpscale" type="button">⤒ upscale this</button>
-    <button class="btn ghost sm" id="lbClose" type="button">-✕-</button>
+    <button class="btn ghost sm" id="lbUpscale" type="button">⤒ upscale</button>
+    <!-- <button class="btn ghost sm" id="lbClose" type="button">-✕-</button> -->
   </div>
 </div>
 <div id="shutdownModal" class="modal" hidden>

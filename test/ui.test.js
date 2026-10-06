@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const html = fs.readFileSync(path.join(ROOT, 'public', 'index.html'), 'utf8');
+const css = fs.readFileSync(path.join(ROOT, 'public', 'style.css'), 'utf8');
 const appSrc = fs.readFileSync(path.join(ROOT, 'public', 'app.js'), 'utf8');
 
 /**
@@ -186,6 +187,37 @@ test('the upscale image and its guidance are spent by the job, the settings are 
   assert.match(submit, /toast\(`\$\{cleared\.join\(' and '\)\} cleared`\)/);
 });
 
+test('the picked image’s own size is read off its thumbnail and printed', () => {
+  // No server route and no header parsing: the browser has to decode the image
+  // to show it anyway, and naturalWidth/naturalHeight is the decoded size. That
+  // makes it work the same for an upload, a paste, a drop and a gallery pick.
+  const slot = app.slice(app.indexOf('function renderUpSlot()'), app.indexOf('function setUpImage'));
+  assert.match(slot, /img\.naturalWidth/, 'the size comes from the decoded image');
+  assert.match(slot, /img\.naturalHeight/);
+  // The handler has to be attached BEFORE src: a cached image can finish
+  // loading before the next statement runs.
+  const loadAt = slot.indexOf('img.onload');
+  const srcAt = slot.indexOf('img.src = url');
+  assert.ok(loadAt !== -1 && srcAt !== -1 && loadAt < srcAt, 'onload is attached before src is set');
+  // And the callback must not rebuild the thumbnail, or it would load again,
+  // which would call it again - forever.
+  const onload = slot.slice(slot.indexOf('img.onload'), slot.indexOf('img.onerror'));
+  assert.match(onload, /updateUpMath\(\)/);
+  assert.equal(/renderUpSlot\(\)/.test(onload), false, 'rendering again here would loop');
+
+  // A stale size under a new picture is worse than no size at all: the numbers
+  // would describe the wrong image and aim the next upscale wrongly.
+  const setter = app.slice(app.indexOf('function setUpImage'), app.indexOf('function setUpImage') + 700);
+  assert.match(setter, /state\.upDims = null/, 'changing or clearing the image forgets its size');
+  assert.match(app, /upDims: null/, 'it starts unknown, not zero');
+
+  // Both notes are marked up for what they now carry.
+  assert.match(html, /class="note dims" id="upSlotNote"/, 'the size line');
+  assert.match(html, /class="note warn" id="upSizeNote"/, 'the too-big warning');
+  assert.match(css, /\.note\.dims \{[^}]*tabular-nums/, 'lining the digits up');
+  assert.match(app, /from '\.\/upmath\.js'/);
+});
+
 test('a hold for ComfyUI\'s own queue says so and keeps send all alive', () => {
   const strip = app.slice(app.indexOf('function renderQueue'), app.indexOf("on('queueToggle'"));
   // "Send all to ComfyUI" is the escape hatch the hold was designed around, so
@@ -204,6 +236,30 @@ test('a hold for ComfyUI\'s own queue says so and keeps send all alive', () => {
     app.indexOf("const hint = $('queueHint')"),
   );
   assert.match(row, /waiting for ComfyUI's queue/);
+});
+
+test('a queue that cannot be written says so, and a recovered one says what came back', () => {
+  assert.match(html, /id="queueSaved"/, 'the warning needs somewhere on the page to live');
+  const htmlSlice = html.slice(html.indexOf('id="queueSaved"') - 80, html.indexOf('id="queueSaved"') + 60);
+  assert.match(htmlSlice, /id="queueSaved" hidden/);
+
+  const strip = app.slice(app.indexOf('function renderQueue'), app.indexOf("on('queueToggle'"));
+  // Shown only when it is both true AND would matter - a failed save while the
+  // queue is empty is noise, and so is a quiet one.
+  assert.match(strip, /const unsaved = Boolean\(q\.saveError\) && \(busy\.length > 0 \|\| q\.waiting > 0 \|\| paused\);/);
+  assert.match(strip, /saved\.hidden = !unsaved;/);
+  assert.match(strip, /the queue is not being saved to disk/);
+  // "Free some space" is the actual answer on a phone: data/ filling up is the
+  // realistic cause, and it is the one the user can do something about.
+  assert.match(strip, /Free some space, or check that data\/ is writable/);
+
+  // Recovery is announced once, and keyed on the timestamp so a reload hours
+  // later does not claim a recovery that is old news.
+  const apply = app.slice(app.indexOf('function applyQueue'), app.indexOf('let pollTimer'));
+  assert.match(app, /restoredShown: null,/);
+  assert.match(apply, /q\.restored\?\.jobs && q\.restored\.at !== state\.restoredShown/);
+  assert.match(apply, /queue recovered — \$\{q\.restored\.jobs\} job/);
+  assert.match(apply, /of them mid-run/);
 });
 
 test('the health dot leads to a written report, not a tooltip', () => {

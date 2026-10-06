@@ -191,6 +191,9 @@ label.btn { display: inline-block; }
 /* A report is lines, not a sentence: the health detail lists the address, the
    server's own error and the hint, and each needs its own line. */
 .note.report { white-space: pre-wrap; word-break: break-word; margin: 0 0 10px; font-size: 12.5px; line-height: 1.45; }
+/* A pair of pixel counts is data, not prose: lining the digits up keeps "1024"
+   from reading as a different quantity to "768" at a glance. */
+.note.dims { font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
 
 /* -------------------------------------------------------------- history */
 .hrow {

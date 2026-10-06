@@ -3,6 +3,7 @@
 import { bindingMark } from './bindmark.js';
 import { durationBetween } from './durfmt.js';
 import { zoomAboutPoint } from './zoommath.js';
+import { describeUpscaleSize, planUpscaleSize, warnUpscaleSize } from './upmath.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -55,10 +56,18 @@ const state = {
   // picture belongs to.
   upImage: null,                  // null | { uploadId } | { ref }
   upImageUrl: null,
+  // The picked image's own pixel size, read off the thumbnail the browser has
+  // already decoded. null until it has loaded - which is why the note under the
+  // image fills in a moment after the image appears rather than with it.
+  upDims: null,
   // The last GET /api/health answer. Kept so the Settings tab can print the
   // whole report - state, address, the server's own error text and the hint -
   // instead of leaving it in a tooltip nobody on a phone will ever see.
   health: null,
+  // The savedAt of the queue recovery this page has already announced. Not
+  // persisted: a fresh page load is entitled to say it once, and a page left
+  // open overnight is not entitled to say it again in the morning.
+  restoredShown: null,
 };
 
 const MAX_SLOTS = 4;
@@ -372,9 +381,31 @@ function renderUpSlot() {
   const d = document.createElement('div');
   d.className = 'slot' + (state.upImage ? ' filled' : '');
   if (state.upImage) {
+    const url = state.upImageUrl;
     const img = document.createElement('img');
-    img.src = state.upImageUrl;
     img.alt = 'image to upscale';
+    // The browser has to decode this image to show it anyway, and the decoded
+    // size is the answer to "how big is the thing I picked" - so no second
+    // request and no server-side header parsing, for uploads and gallery picks
+    // alike. The handler is attached BEFORE src: a cached image can finish
+    // loading before the next line runs.
+    img.onload = () => {
+      if (state.upImageUrl !== url) return; // a different image won the race
+      const w = img.naturalWidth;
+      const h = img.naturalHeight;
+      state.upDims = w > 0 && h > 0 ? { width: w, height: h } : null;
+      // Deliberately not renderUpSlot() here: that would build another <img>,
+      // which would load again, which would call this again.
+      updateUpMath();
+    };
+    img.onerror = () => {
+      if (state.upImageUrl !== url) return;
+      // A gallery entry whose download never landed has no bytes to measure.
+      // Saying nothing beats printing a size that was never read.
+      state.upDims = null;
+      updateUpMath();
+    };
+    img.src = url;
     d.append(img);
     const x = document.createElement('button');
     x.className = 'x';
@@ -387,13 +418,16 @@ function renderUpSlot() {
     d.onclick = () => { $('upFilePick').value = ''; $('upFilePick').click(); };
   }
   wrap.append(d);
-  setHidden('upSlotNote', !state.upImage);
   updateUpMath();
 }
 
 function setUpImage(value, url) {
   state.upImage = value ?? null;
   state.upImageUrl = value ? url : null;
+  // The old size belongs to the old picture. Leaving it up would print one
+  // image's dimensions under another's thumbnail for as long as the tab stayed
+  // open - and the next upscale would be aimed at the wrong size.
+  state.upDims = null;
   renderUpSlot();
 }
 
@@ -523,9 +557,10 @@ function updateUpMath() {
   const bits = [];
   if (!state.upImage) bits.push('pick an image first');
   if (toDim && Number.isFinite(w) && Number.isFinite(h)) {
-    // The graph multiplies BOTH sides by one factor k = min(4, sqrt(W*H/src)),
-    // so the result has the target's pixel count and the source's shape.
-    bits.push(`result fits inside ${w} × ${h}, same shape as the original, never more than 4×`);
+    // The graph multiplies BOTH sides by one factor k = min(4, sqrt(targetW*targetH/(W*H))),
+    // so the result has the box's AREA and the source's shape. It does NOT fit
+    // inside the box - it can come out wider or taller than the box on one side.
+    bits.push(`the box's ${w} × ${h} worth of pixels, in the original's shape, never more than 4× a side`);
   } else if (Number.isFinite(scale) && scale > 0) {
     bits.push(`each side ×${trimNum(scale)}`);
   }
@@ -540,6 +575,22 @@ function updateUpMath() {
     out.push(`The ${n} are sampled together, so the noise is different for each - but they all sit in memory at the target size at once, so a big size and a big batch together can run the card out of memory.`);
   }
   setText('upMath', out.join(' '));
+
+  // The numbers themselves, now that the source size is known. Under the
+  // thumbnail rather than folded into the sentence above, because it is the one
+  // thing on this tab that changes the moment a different picture is picked.
+  const note = describeUpscaleSize(state.upDims, { scale, toDim, targetWidth: w, targetHeight: h });
+  setText('upSlotNote', note);
+  setHidden('upSlotNote', !note);
+
+  // ...and a result nobody can be sure will fit, said plainly rather than left
+  // to be discovered twenty minutes into a run.
+  const plan = state.upDims
+    ? planUpscaleSize(state.upDims.width, state.upDims.height, { scale, toDim, targetWidth: w, targetHeight: h })
+    : null;
+  const warn = warnUpscaleSize(plan);
+  setText('upSizeNote', warn);
+  setHidden('upSizeNote', !warn);
 }
 
 function trimNum(n) {
@@ -1054,6 +1105,18 @@ function renderQueue() {
         ? `held — ${q.message || 'ComfyUI is busy with work this app did not send'}. ${q.waiting ?? 0} job(s) wait here and start on their own as soon as it is free — or press send all to queue up behind it now.`
         : `paused — ${q.waiting ?? 0} job(s) held here. Press resume to carry on.`;
   }
+  // The queue is written to data/queue.json on every change, so a restart resumes
+  // it. If that write is failing the promise is broken, and a full card or a
+  // read-only data folder is exactly the situation where you would find out at
+  // the worst moment - so it is said out loud instead of hoped for.
+  const saved = $('queueSaved');
+  const unsaved = Boolean(q.saveError) && (busy.length > 0 || q.waiting > 0 || paused);
+  saved.hidden = !unsaved;
+  if (unsaved) {
+    saved.textContent =
+      `⚠ the queue is not being saved to disk — ${q.saveError}. ` +
+      'A restart would lose it. Free some space, or check that data/ is writable.';
+  }
   // Both submit buttons offer the queue, because both share it.
   setText('generate', busy.length ? 'Add to queue' : 'Generate');
   setText('upscale', busy.length ? 'Add to queue' : 'Upscale');
@@ -1101,6 +1164,16 @@ function applyQueue(q) {
   // A new hold deserves a new "ComfyUI is back" offer, so the once-only flag is
   // cleared the moment the queue is held again rather than after a resume.
   if (q.paused && !wasPaused) resumeOffered = false;
+  // The queue came back off disk after a restart. Said once per page, and keyed
+  // on the timestamp so a reload does not claim a recovery that happened hours
+  // ago - the jobs are on screen either way, and this is only the explanation.
+  if (q.restored?.jobs && q.restored.at !== state.restoredShown) {
+    state.restoredShown = q.restored.at;
+    toast(
+      `queue recovered — ${q.restored.jobs} job${q.restored.jobs === 1 ? '' : 's'} from before the restart` +
+      `${q.restored.running ? `, ${q.restored.running} of them mid-run` : ''}`,
+    );
+  }
   renderQueue();
 }
 
@@ -1369,7 +1442,7 @@ function renderGallery() {
       const acts = document.createElement('div');
       acts.className = 'acts';
       const bUp = document.createElement('button');
-      bUp.textContent = '⤒ upscale this';
+      bUp.textContent = '⤒ upscale';
       bUp.onclick = () => { useAsUpInput(entry); showTab('upscale'); window.scrollTo(0, 0); };
       const bUse = document.createElement('button');
       bUse.textContent = '⟳ use as input';
@@ -1464,19 +1537,19 @@ function renderHistory() {
     const p = document.createElement('div');
     p.className = 'hrow-prompt';
     p.textContent = (entry.kind ?? entry.settings?.kind) === 'upscale' ? `⤒ ${entry.prompt || '(upscale)'}` : (entry.prompt || '(empty prompt)');
-    const x = document.createElement('button');
-    x.className = 'hrow-x';
-    x.type = 'button';
-    x.textContent = '×';
-    x.title = 'forget this prompt';
-    x.onclick = async (ev) => {
-      ev.stopPropagation();
-      try {
-        await api(`/api/history/${entry.id}`, { method: 'DELETE' });
-        loadHistory();
-      } catch (e) { toast(e.message); }
-    };
-    top.append(p, x);
+    // const x = document.createElement('button');
+    // x.className = 'hrow-x';
+    // x.type = 'button';
+    // x.textContent = '×';
+    // x.title = 'forget this prompt';
+    // x.onclick = async (ev) => {
+    //   ev.stopPropagation();
+    //   try {
+    //     await api(`/api/history/${entry.id}`, { method: 'DELETE' });
+    //     loadHistory();
+    //   } catch (e) { toast(e.message); }
+    // };
+    // top.append(p, x);
     card.append(top);
 
     const s = entry.settings ?? {};

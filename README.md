@@ -148,6 +148,30 @@ Turn **Scale to a target size** on and the workflow computes one uniform factor
 `min(4, √(targetW·targetH / (w·h)))`, so the aspect ratio survives: a 3000 × 2000
 target on a 1000 × 1000 source scales by 2.45, not by 3 and 2 separately.
 
+**That factor scales AREA to the box, not the sides to the box.** It gives the
+result the box's pixel count in the source's shape, which means the result can
+come out *larger* than the box on one side: a 1024 × 768 source aimed at
+2048 × 2048 comes out 2364 × 1773, not 2048 × 1536. Two independent fits would
+have kept it inside the box and stretched the picture. If you need the result to
+sit inside a box, set the box's two sides to the aspect ratio you want.
+
+The 4 in that formula is the export's own ceiling and cannot be raised. Asking a
+256 × 256 image for an 8192 × 8192 box gives 1024 × 1024, not 8192 — no amount of
+asking changes it.
+
+**The size of the image you picked is printed under it**, with the size that will
+come out the other end:
+
+```
+1024 × 768  →  2048 × 1536
+```
+
+It is read straight off the thumbnail the browser has already decoded, so there
+is no extra request and it works the same for an upload, a paste, a drop and a
+gallery pick. It updates the moment you change the multiplier or the target
+box. A result wider than 8192 on a side is called out in orange first — that is
+the point where a small card runs out of memory twenty minutes into a run.
+
 > **Both halves of the size switch are written.** The graph's height switch (node
 > `530`) is a hard-wired `false` in the export while the width switch (node `527`)
 > follows `526`. Taken literally that would aim at the target *width* and a plain
@@ -321,6 +345,31 @@ The detail panel always follows whatever is actually running, so you never have 
 watch a finished job. It repaints itself after a page reload too — the server
 replays the current job list on connect.
 
+**The queue is saved to disk.** `data/queue.json` holds everything in flight, so a
+killed server, a dead battery or an accidental `npm` restart does not throw the
+queue away. Start the server again and the jobs come back in the order you
+queued them, and a toast says how many — including how many were mid-run. The
+file is written by a `tmp` file and a rename, so a cut power supply leaves the
+previous file whole rather than a half-written one, and it is deleted once the
+queue empties.
+
+Three details worth knowing:
+
+- **The job that was running is saved too**, and comes back first, because it may
+  own a prompt already burning GPU time. The app asks ComfyUI whether that prompt
+  is still known. If it is, it re-attaches and watches it to the end. If ComfyUI
+  restarted and forgot it, the run is marked failed with an explanation instead
+  of hanging forever.
+- **A job that had already finished is not run again.** The file is cleared as
+  soon as the queue drains, so this only matters if the server is killed in the
+  small window between finishing and the next save.
+- **If the file cannot be written, the queue bar says so** in orange rather than
+  pretending. A full phone, or a `data/` that has become read-only, is worth
+  knowing about before you queue an hour of work.
+
+The 100 most recent jobs are kept in that file. Beyond that, the oldest are
+dropped — and the app says so once in the log rather than every time.
+
 ### Run timers
 
 Each run in the detail panel carries its own generating-time clock, ticking once a
@@ -394,6 +443,9 @@ not start four generations behind your back just because a ping succeeded.
 `send all to ComfyUI` is disabled while the queue is held for a lost connection
 (there is nowhere to send it to yet); the pause bar stays visible even over an
 empty queue, because the resume button is the only way back out of a pause.
+
+Both kinds of hold survive a restart, because the queue itself is on disk — see
+*The queue is saved to disk*.
 
 ### When ComfyUI is busy with somebody else's work
 
@@ -730,8 +782,17 @@ not the LAN, so the host box needs the PC's address and ComfyUI needs
 so the queue held itself instead of failing every run one by one. Nothing is lost
 — press `▶ resume queue` when the server is reachable again, or `send all to
 ComfyUI` if you would rather hand the work over first. If the server was
-restarted, the in-memory queue is empty by definition (see *Walking off the
-network*).
+restarted, the queue comes back from `data/queue.json` on its own — see *The
+queue is saved to disk*.
+
+**A run is marked failed saying the server restarted.** ComfyUI had forgotten the
+prompt — usually because ComfyUI itself was restarted, which empties its queue
+and history. The app cannot re-watch a prompt that no longer exists, so it says
+so instead of waiting forever. Submit it again.
+
+**The queue bar warns that nothing is being saved.** The file could not be
+written, usually a full phone or a `data/` that has become read-only. The queue
+still works; a restart just loses it.
 
 **The queue says `held` and the wait looks unending.** That is the other pause:
 ComfyUI is busy with prompts this app never sent, most likely from another device
@@ -783,12 +844,14 @@ surface end to end (including a batch of 4 landing in node 506 as one prompt),
 the download-retry sweep, the run-timer format, focal-point
 zoom math, the hold for somebody else's work in ComfyUI's queue, every health
 answer (no answer, a slow answer, a login page, a refusal, a nonsense address),
-and the shut down
-route. 235 of them; they need no network and no real
-ComfyUI (`test/queue.test.js`, `test/retry.test.js`, `test/shutdown.test.js` and
-`test/upscale.test.js` each run a fake ComfyUI from the shared
-`test/helpers/fakeComfy.js`). Every temp root a test creates is deleted again, so
-running the suite on the phone does not leave litter behind.
+the queue surviving a killed process, the arithmetic the Upscale tab prints
+under the picture (including a check that it still matches the workflow it
+transcribes), and the shut down
+route. 264 of them; they need no network and no real
+ComfyUI (`test/queue.test.js`, `test/retry.test.js`, `test/shutdown.test.js`,
+`test/upscale.test.js` and `test/persist.test.js` each run a fake ComfyUI from
+the shared `test/helpers/fakeComfy.js`). Every temp root a test creates is
+deleted again, so running the suite on the phone does not leave litter behind.
 
 `test/reset.test.js` starts a second server on port 3082, `test/shutdown.test.js`
 on 3083 and `test/upscale.test.js` on 3084, each with `MOBILE_CFY_ROOT` pointed at
@@ -811,16 +874,17 @@ config.json        generated; all node ids and paths
 workflow_api.json  the ComfyUI workflow, API format (generate)
 upscale_api.json   the ComfyUI workflow, API format (upscale)
 lib/               config, comfy, ws, payload, runner, download, gallery,
-                   history, uploads, multipart, env, retry, shutdown
+                   history, queuedb, uploads, multipart, env, retry, shutdown
 public/            index.html, app.js, style.css, bindmark.js, durfmt.js,
-                   zoommath.js   (no build step)
-                   durfmt.js and zoommath.js are browser-side pure functions,
+                   zoommath.js, upmath.js   (no build step)
+                   durfmt.js, zoommath.js and upmath.js are browser-side pure functions,
                    pulled out of app.js because the browser parts of app.js are
                    not unit-testable (see PLAN.md)
 test/              node --test  (helpers/fakeComfy.js is the shared fake server)
 data/
   history.json     prompt memory (300 newest)
   index.json       gallery index
+  queue.json       the in-flight queue, so a restart does not lose it
   uploads/         reference images you attached
 ```
 

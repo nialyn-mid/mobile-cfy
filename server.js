@@ -686,6 +686,11 @@ let exiting = false;
 function shutDown(reason = 'signal') {
   if (exiting) return;
   exiting = true;
+  // The queue's last write is debounced, and there is no time left to wait for
+  // it. Writing it synchronously here is what makes "shut the server down and
+  // start it again" safe: without it, a job queued in the last 300ms of the
+  // process's life would be the one job that did not survive.
+  runner.flushNow();
   console.log(`\nbye (${reason})`);
   process.exitCode = 0;
   setTimeout(() => process.exit(0), 300).unref();
@@ -713,6 +718,12 @@ const server = http.createServer(async (req, res) => {
 
 const c = config();
 server.listen(c.server.port, c.server.host, () => {
+  // Inside the callback, on purpose: a queue left on disk by a previous run is
+  // put back and started only once the port is actually open, so the first
+  // client to connect sees the whole queue rather than a half-restored one, and
+  // a typo in the config cannot start a generation before anybody can reach the
+  // server to cancel it.
+  runner.restore();
   console.log(`mobile-cfy  http://${c.server.host}:${c.server.port}`);
   console.log(`  comfyui    http://${c.comfy.host}:${c.comfy.port}   token ${getToken() ? 'configured' : 'MISSING'}`);
   console.log(`  auth env   ${envFilePath()}`);
