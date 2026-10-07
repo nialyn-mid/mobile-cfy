@@ -50,7 +50,7 @@ export const dropRoot = (root) => fs.rmSync(root, { recursive: true, force: true
  * which a run has a prompt id and NO start time, so it is the state a timer has
  * to be right about. `startAll()` (or `start(id)`) moves it to `queue_running`.
  */
-export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode = 8, textNode = 181 } = {}) {
+export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode = 8, textNode = 181, port = 0 } = {}) {
   const state = {
     mode,
     holdStart,
@@ -64,6 +64,14 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
     foreign: [],
     foreignNext: 0,
     history: new Map(),
+    // prompt id -> the graph it was submitted with. Both /queue and /history
+    // hand it back (positional index 2 / the `prompt` field), which is what
+    // lets a run that lost its response be re-found by payload fingerprint.
+    graphs: new Map(),
+    // Consume the next /prompt: record it, then drop the socket before
+    // answering - the exact "response never arrived" window a fingerprint
+    // exists for.
+    loseNext: false,
     uploads: [],
     stall: null,
     queueFail: false,
@@ -76,7 +84,11 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
     authFail: false,
   };
 
-  const entryFor = (n, prompt) => ({
+  const entryFor = (n, prompt, graph = null) => ({
+    // The graph travels with the entry, the way ComfyUI's history carries it:
+    // fingerprint matching needs it, and the shape helpers in lib/resync.js
+    // read it back out of whichever form it arrives in.
+    prompt: graph ?? undefined,
     status: { status_str: 'success', completed: true },
     outputs: {
       // The graph under test decides which node saves; the generate workflow
@@ -87,6 +99,16 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
       ...(textNode === null ? {} : { [textNode]: { text: [`enhanced: ${String(prompt).slice(0, 40)}`] } }),
     },
   });
+
+  // A tag on every id this instance mints.
+  //
+  // Real ComfyUI hands out a fresh UUID per prompt. This fake numbers them, and
+  // each test starts a NEW fake - so without a tag the ids would collide with
+  // the ones an earlier test's jobs still remember, and the runner's "one
+  // prompt never serves two runs" guard would then hide the very prompt a
+  // resync is trying to find. The tag is opaque: nothing parses these ids, and
+  // the suite only ever reads them back positionally.
+  const tag = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
@@ -102,12 +124,21 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
     if (req.method === 'POST' && url.pathname === '/prompt') {
       readJson(req).then((body) => {
         const n = ++state.next;
-        const promptId = `p${n}`;
+        const promptId = `${tag}${n}`;
         state.prompts.push({ id: promptId, payload: body?.prompt, clientId: body?.client_id });
-        if (state.mode === 'instant') state.history.set(promptId, entryFor(n, 'x'));
+        state.graphs.set(promptId, body?.prompt ?? null);
+        const lose = state.loseNext;
+        if (lose) state.loseNext = false;
+        if (state.mode === 'instant' && !lose) state.history.set(promptId, entryFor(n, 'x', body?.prompt));
         else {
           state.pending.set(promptId, n);
           if (!state.holdStart) state.running.add(promptId);
+        }
+        if (lose) {
+          // Recorded, then gone: the runner sees a dropped connection and is
+          // left with a fingerprint and no prompt id.
+          res.destroy();
+          return;
         }
         const reply = () => send(200, { prompt_id: promptId, number: n, node_errors: {} });
         // `stallNext` lets a test hold the ANSWER back while the prompt is already
@@ -117,6 +148,15 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
         state.stall = null;
         stall.promise.then(reply, reply);
       });
+      return;
+    }
+
+    if (req.method === 'GET' && url.pathname === '/history') {
+      // The whole history - what a resync reads to match a run that has no
+      // prompt id left, by the graph it was submitted with.
+      const out = {};
+      for (const [id, entry] of state.history) out[id] = entry;
+      send(200, out);
       return;
     }
 
@@ -147,10 +187,12 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
       if (state.queueFail) return send(500, { error: 'queue unavailable' });
       // ComfyUI really does separate the two lists, and so must the fake: the
       // difference between "queued" and "running" is the whole reason the run
-      // timer does not start at submit.
+      // timer does not start at submit. The graph rides at index 2 - the
+      // documented position - because fingerprint adoption reads it from here.
+      const entry = (id) => [1, id, state.graphs.get(id) ?? {}, {}, []];
       send(200, {
-        queue_running: [...state.pending.keys()].filter((id) => state.running.has(id)).map((id) => [1, id, {}, {}, []]),
-        queue_pending: [...state.pending.keys()].filter((id) => !state.running.has(id)).map((id) => [1, id, {}, {}, []]),
+        queue_running: [...state.pending.keys()].filter((id) => state.running.has(id)).map(entry),
+        queue_pending: [...state.pending.keys()].filter((id) => !state.running.has(id)).map(entry),
       });
       return;
     }
@@ -187,14 +229,14 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
   });
 
   return new Promise((resolve) => {
-    server.listen(0, '127.0.0.1', () => {
-      const { port } = server.address();
+    server.listen(port ?? 0, '127.0.0.1', () => {
+      const { port: bound } = server.address();
       resolve({
-        port,
+        port: bound,
         state,
         /** Finish every prompt still waiting. */
         completeAll() {
-          for (const [id, n] of state.pending) state.history.set(id, entryFor(n, 'x'));
+          for (const [id, n] of state.pending) state.history.set(id, entryFor(n, 'x', state.graphs.get(id)));
           state.pending.clear();
           state.running.clear();
         },
@@ -216,7 +258,7 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
          */
         foreign(n = 1) {
           for (let i = 0; i < n; i += 1) {
-            const id = `x${++state.foreignNext}`;
+            const id = `${tag}x${++state.foreignNext}`;
             state.pending.set(id, ++state.next);
             state.running.add(id);
             state.foreign.push(id);
@@ -237,6 +279,22 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
           let release = () => {};
           state.stall = { promise: new Promise((r) => { release = r; }) };
           return { release: () => release() };
+        },
+        /**
+         * The next /prompt is recorded and then its connection is dropped
+         * before any answer: the runner ends up holding the queue with a
+         * fingerprint and no prompt id, which is exactly the window a resync
+         * has to close by finding the payload again.
+         */
+        loseNextResponse() {
+          state.loseNext = true;
+        },
+        /** Forget every prompt and every history entry - a restarted ComfyUI. */
+        forgetAll() {
+          state.pending.clear();
+          state.running.clear();
+          state.history.clear();
+          state.graphs.clear();
         },
         close: () => new Promise((r) => server.close(r)),
       });

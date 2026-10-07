@@ -428,11 +428,36 @@ route('GET', '/api/queue', async (req, res) => json(res, 200, runner.queueState(
 route('POST', '/api/queue/pause', async (req, res) => json(res, 200, runner.pause('manual')));
 
 route('POST', '/api/queue/resume', async (req, res) => {
-  const state = runner.resume();
+  // Awaited: the resume reconciles with ComfyUI first (collect what finished
+  // while we were away, adopt what is already queued) and only then starts
+  // submitting, so the state handed back here is the post-resync one.
+  const state = await runner.resume();
   // The connection is known good at this exact moment, which is the moment the
   // retry sweep is worth running.
   sweepDownloads();
   json(res, 200, state);
+});
+
+// Reorder the queue: the selected item's row has no buttons of its own, the
+// selection bar does, and both arrows land here.
+route('POST', '/api/queue/move', async (req, res) => {
+  const body = await readJson(req);
+  const id = typeof body?.id === 'string' ? body.id : null;
+  const delta = Number(body?.delta);
+  if (!id || !Number.isFinite(delta) || delta === 0) {
+    return json(res, 400, { error: 'id and a non-zero delta are required' });
+  }
+  if (!runner.move(id, delta)) {
+    return json(res, 404, { error: 'that job is not waiting in the queue' });
+  }
+  json(res, 200, { queue: runner.queueState(), jobs: runner.list() });
+});
+
+// Reconcile on demand: what the reconnect does on its own, callable by hand
+// (and by the page when it opens against a queue that was restored from disk).
+route('POST', '/api/queue/resync', async (req, res) => {
+  const report = await runner.resync();
+  json(res, 200, { resync: report, queue: runner.queueState(), jobs: runner.list() });
 });
 
 route('POST', '/api/queue/submit-all', async (req, res) => {

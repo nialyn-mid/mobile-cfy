@@ -203,6 +203,16 @@
     <button id="queueSubmitAll" class="btn ghost sm" type="button">send all to ComfyUI</button>
   </div>
   <div id="queueList" class="queuebar" hidden></div>
+  <!-- One bar for whichever queue row is selected, instead of a cluster of
+       buttons on every row: the queue is scanned as a list, and the bar only
+       appears once a row has been picked. -->
+  <div class="btnrow" id="selBar" hidden>
+    <span class="selwho" id="selWho"></span>
+    <button id="selDetails" class="btn ghost sm" type="button">details</button>
+    <button id="selUp" class="btn ghost sm" type="button">move up</button>
+    <button id="selDown" class="btn ghost sm" type="button">move down</button>
+    <button id="selCancel" class="btn ghost sm danger" type="button">cancel</button>
+  </div>
   <p class="err" id="genErr" hidden></p>
 
   <div id="jobPanel" class="card" hidden>

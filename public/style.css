@@ -206,6 +206,13 @@ label.btn { display: inline-block; }
 .hrow.tap { cursor: pointer; }
 .hrow.tap:active { background: var(--panel2); }
 .hrow-top { display: flex; gap: 8px; align-items: flex-start; }
+/* The row a Details / history button jumped to. Pulses twice, then stops on
+   its own - a marker that fades beats one that has to be dismissed. */
+.hrow.flash { animation: hflash 1.1s ease-in-out 2; }
+@keyframes hflash {
+  0%, 100% { border-color: var(--line); }
+  50% { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent); }
+}
 .hrow-prompt { flex: 1; color: var(--fg); font-size: 13px; line-height: 1.35; word-break: break-word; }
 .hrow-x {
   flex: none; background: none; border: 0; color: var(--dim);
@@ -301,16 +308,23 @@ label.btn { display: inline-block; }
 }
 .qrow.running { border-color: var(--accent); }
 .qrow.finished { opacity: .72; }
+/* The row the action bar below the list is acting on. The border carries it,
+   so the selection is still readable in daylight and with no colour sense. */
+.qrow.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
 .qtext { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qrow.finished .qtext { cursor: pointer; }
 .qmeta { color: var(--dim); font-size: 11.5px; white-space: nowrap; }
-.qx {
-  background: none; border: 0; color: var(--dim);
-  font-size: 17px; line-height: 1; cursor: pointer; padding: 2px 4px;
-}
-.qx:hover { color: var(--bad); }
 .qbar { height: 4px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin-top: 6px; }
 .qbar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .25s ease; }
+
+/* The selected job's action bar: which job, and the four things to do with it.
+   The name stays pinned while the buttons wrap under it on a narrow phone. */
+#selBar { align-items: center; }
+#selBar .selwho {
+  flex: 1 1 100%; min-width: 0; order: -1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--dim); font-size: 11.5px;
+}
 
 .runs { list-style: none; margin: 8px 0 0; padding: 0; font-size: 12.5px; }
 .runs li {

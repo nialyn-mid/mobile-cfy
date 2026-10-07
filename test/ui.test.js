@@ -491,3 +491,92 @@ test('the server has a route for every api path the page calls', () => {
   const missing = [...new Set(calls)].filter((p) => !server.includes(`'/api/${p}'`)).sort();
   assert.deepEqual(missing, [], `the page calls routes the server does not register: ${missing.join(', ')}`);
 });
+
+test("a waiting job's actions live in one bar under the queue, not on every row", () => {
+  // Four buttons per row, repeated down a list of waiting jobs, is a column of
+  // tiny targets on a phone - and the row has no room left for its own text.
+  // One bar for the one selected job replaces them, so every id it needs must
+  // be in the markup (a missing id would silently disable that action, this
+  // file's whole reason to exist), the bar must start hidden, and it must sit
+  // after the list it acts on.
+  for (const id of ['selBar', 'selWho', 'selDetails', 'selUp', 'selDown', 'selCancel']) {
+    assert.equal(htmlIds.has(id), true, `#${id} is missing from index.html`);
+  }
+  assert.match(html, /<div class="btnrow" id="selBar" hidden>/, 'nothing is selected at boot');
+  assert.ok(
+    html.indexOf('id="selBar"') > html.indexOf('id="queueList"'),
+    'the bar belongs below the queue it acts on',
+  );
+
+  // The row still says WHICH one is selected, and the bar only appears for a
+  // job the four buttons could actually act on - a finished row lets go of its
+  // selection rather than offering "move up" on a job that is already gone.
+  assert.match(app, /\+ \(state\.sel === j\.id \? ' sel' : ''\);/, 'the selected row is marked');
+  assert.match(
+    app,
+    /state\.sel = inFlight\(j\) \? \(state\.sel === j\.id \? null : j\.id\) : null;/,
+    'only a job in flight can hold the selection, and a second tap clears it',
+  );
+  const strip = app.slice(app.indexOf('function renderQueue'), app.indexOf("on('queueToggle'"));
+  assert.match(strip, /const actions = \$\('selBar'\);/);
+  assert.match(strip, /actions\.hidden = !selJob;/);
+  assert.match(strip, /setText\('selWho'/, 'the bar names the job it is about');
+  // Each arrow is disabled exactly where a move would clamp straight back to
+  // the same spot, instead of a button that presses and does nothing.
+  assert.match(strip, /setDisabled\('selUp', !movable \|\| at <= 1\);/);
+  assert.match(strip, /setDisabled\('selDown', !movable \|\| at >= selJob\.queueLength\);/);
+
+  for (const id of ['selDetails', 'selUp', 'selDown', 'selCancel']) {
+    assert.match(app, new RegExp(`on\\('${id}'`), `nothing is wired to #${id}`);
+  }
+  // Details is a jump to the history entry, and the reorder goes through the
+  // queue's own move route rather than reshuffling the list locally.
+  assert.match(app, /showHistoryForJob\(state\.sel\)/);
+  assert.match(app, /await api\('\/api\/queue\/move'/);
+
+  // The per-row controls they replaced must stay gone - in the script...
+  assert.equal(/\bqx\b/.test(appSrc), false, 'per-row action buttons are back in app.js');
+  // ...and in the stylesheet, where a leftover rule would resurrect the styling.
+  assert.equal(/\.qx/.test(css), false, 'and a .qx rule is still in style.css');
+  assert.match(css, /\.qrow\.sel \{/, 'the selected row must be visible as such');
+});
+
+test('both ways into a history entry land on the row that belongs to that job', () => {
+  // Two entry points now: the action bar's Details and the gallery cell's
+  // history button. Both hand over the JOB id and one function does the rest,
+  // because entries fold by prompt - a job can sit inside a row that remembers
+  // several jobIds, so matching on position or on prompt text would miss.
+  assert.match(app, /showHistoryForJob\(state\.sel\)/, 'from the queue');
+  assert.match(app, /bHist\.textContent = '🕘 history'/, 'a gallery cell offers it');
+  assert.match(app, /bHist\.onclick = \(\) => showHistoryForJob\(entry\.jobId\)/);
+  assert.match(app, /acts\.append\(bUse, bHist\)/, 'and is actually appended, not just built');
+  assert.equal(/\bbUp\b/.test(appSrc), false, 'the dead upscale twin is back in the gallery');
+
+  // The target travels as a flag, never as a position: the list is re-read on
+  // every visit, so a row index would point at the wrong entry an hour later.
+  const jump = app.slice(app.indexOf('function showHistoryForJob'), app.indexOf('function useEnhancedAsPrompt'));
+  const setsFlag = jump.indexOf('state.histFlash = jobId');
+  const opensTab = jump.indexOf("showTab('history')");
+  assert.ok(setsFlag !== -1, 'the job id is remembered');
+  assert.ok(opensTab !== -1, 'and the history tab is opened');
+  assert.ok(setsFlag < opensTab, 'the flag is set before the tab opens, or nothing would find it');
+
+  // After the fetch lands, the flash finds the row by id - or by any id folded
+  // into it - and says so out loud when there is no such row yet.
+  assert.match(app, /e\.jobId === want \|\| \(e\.jobIds \?\? \[\]\)\.includes\(want\)/);
+  assert.match(app, /card\.classList\.add\('flash'\)/);
+  assert.match(app, /scrollIntoView\(\{ block: 'center' \}\)/, 'it is brought into view');
+  assert.match(app, /no history entry for that job \(yet\)/, 'a miss is reported, not swallowed');
+  assert.match(css, /\.hrow\.flash \{/, 'the mark itself needs a rule to be seen');
+});
+
+test('a history row still shows its prompt now that the delete button is off', () => {
+  // The delete button was switched off by commenting out its line, and that
+  // line was `top.append(p, x)` - taking the PROMPT (`p`) with it. Every row
+  // then built its text and dropped it on the floor, which is exactly the
+  // "prompt text disappears" report: a commented-out append is not an append.
+  assert.match(app, /\btop\.append\(p\);/, 'the prompt row must be appended on its own');
+  assert.equal(/top\.append\(p, x\)/.test(app), false, 'the delete-button append stays off (x is commented out)');
+  assert.equal(/hrow-x/.test(app), false, 'the delete button itself stays off');
+  assert.match(app, /p\.textContent = /, 'and it carries the text it was built for');
+});

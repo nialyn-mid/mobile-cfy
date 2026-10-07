@@ -90,6 +90,18 @@ const state = {
   // persisted: a fresh page load is entitled to say it once, and a page left
   // open overnight is not entitled to say it again in the morning.
   restoredShown: null,
+  // The waiting job whose action bar (details / move / cancel) is showing.
+  // Separate from state.job: tapping a row still drives the detail panel, but
+  // the bar only appears once the tap has made a deliberate choice, and it
+  // clears itself the moment that job leaves the queue.
+  sel: null,
+  // The resync's `at` this page has already announced - same once-per-sweep
+  // keying as restoredShown, so a reconnect that found finished work says so
+  // exactly once instead of on every queue event.
+  resyncShown: null,
+  // A job id waiting to be found and flashed by the next renderHistory(). Set
+  // by showHistoryForJob(), consumed after the list is rebuilt.
+  histFlash: null,
 };
 
 const MAX_SLOTS = 4;
@@ -1012,7 +1024,14 @@ const unsubmitted = (j) => j.runs?.some((r) => !r.promptId && ['pending', 'queue
 function renderQueue() {
   const wrap = $('queueList');
   const jobs = [...state.jobs.values()];
-  const busy = jobs.filter(inFlight);
+  // move() reorders the server's waiting list in place, but /api/jobs answers
+  // in job-CREATION order and the Map keys never move - so the rows have to be
+  // sorted by queuePosition or "move up" would change "queued 2 of 3" to
+  // "queued 1 of 3" without the rows visibly swapping. The running job sits
+  // ahead of all of them (it holds no position), and a snapshot that somehow
+  // has neither falls in behind everything that does.
+  const pos = (j) => (j.status === 'running' ? 0 : j.queuePosition ?? Number.MAX_SAFE_INTEGER);
+  const busy = jobs.filter(inFlight).sort((a, b) => pos(a) - pos(b));
   const rows = busy.slice();
   const q = state.queue ?? {};
   const paused = q.paused === true;
@@ -1035,7 +1054,8 @@ function renderQueue() {
   for (const j of rows) {
     const finished = !inFlight(j);
     const row = document.createElement('div');
-    row.className = 'qrow' + (j.status === 'running' ? ' running' : finished ? ' finished' : '');
+    row.className = 'qrow' + (j.status === 'running' ? ' running' : finished ? ' finished' : '')
+      + (state.sel === j.id ? ' sel' : '');
     const dot = document.createElement('span');
     dot.textContent =
       j.status === 'running' ? '▶' : finished ? '✓' : j.status === 'paused' ? '⏸' : '⏳';
@@ -1046,7 +1066,17 @@ function renderQueue() {
     text.textContent = (j.kind === 'upscale' || j.spec?.kind === 'upscale' ? '⤒ ' : '')
       + truncate(j.spec?.prompt ?? '(no prompt)', 42);
     text.title = 'tap to show this job';
-    text.onclick = () => { state.job = j; renderJob(j); renderQueue(); };
+    // One tap does both: it shows the job in the detail panel AND arms the
+    // action bar under the list (details / move / cancel). Tapping the already
+    // selected row lets go of it. The bar is for QUEUE items - a finished row
+    // still opens the panel, but move and cancel have nothing left to act on,
+    // so it never holds the selection.
+    text.onclick = () => {
+      state.job = j;
+      state.sel = inFlight(j) ? (state.sel === j.id ? null : j.id) : null;
+      renderJob(j);
+      renderQueue();
+    };
     const meta = document.createElement('span');
     meta.className = 'qmeta';
     if (finished) {
@@ -1082,17 +1112,9 @@ function renderQueue() {
         : 'queued';
       row.append(dot, text, meta);
     }
-    if (!finished) {
-      const x = document.createElement('button');
-      x.className = 'qx';
-      x.type = 'button';
-      x.textContent = '×';
-      x.title = 'cancel this job';
-      x.onclick = async () => {
-        try { await api(`/api/jobs/${j.id}/cancel`, { method: 'POST' }); } catch (e) { toast(e.message); }
-      };
-      row.append(x);
-    }
+    // No cancel button on the row any more: the selected row's action bar
+    // under the list carries it (and the job detail panel keeps its own), so
+    // every row has the same shape and nothing shrinks as jobs come and go.
     wrap.append(row);
   }
 
@@ -1153,6 +1175,27 @@ function renderQueue() {
   // Both submit buttons offer the queue, because both share it.
   setText('generate', busy.length ? 'Add to queue' : 'Generate');
   setText('upscale', busy.length ? 'Add to queue' : 'Upscale');
+
+  // The action bar follows the selected job. A selection whose job has left
+  // the waiting list (cancelled, finished, resynced away) lets go of itself -
+  // a bar pointing at nothing would offer "move up" on a job nobody can see.
+  const selJob = state.sel ? busy.find((j) => j.id === state.sel) : null;
+  if (!selJob && state.sel) state.sel = null;
+  const actions = $('selBar');
+  actions.hidden = !selJob;
+  if (selJob) {
+    setText('selWho', truncate(selJob.spec?.prompt ?? selJob.spec?.kind ?? 'job', 28));
+    // Each arrow is enabled exactly when the server's move() would not clamp
+    // straight back to the same spot (it answers 404 then): queuePosition is
+    // 1-based within the waiting list, and null once the job is running - the
+    // running job is never in that list, so neither arrow applies to it.
+    // Moving is allowed while the queue is held; order is worth setting up
+    // before it resumes.
+    const at = selJob.queuePosition;
+    const movable = selJob.status !== 'running' && at != null;
+    setDisabled('selUp', !movable || at <= 1);
+    setDisabled('selDown', !movable || at >= selJob.queueLength);
+  }
 }
 
 on('queueToggle', async () => {
@@ -1189,6 +1232,58 @@ on('queueSubmitAll', async () => {
   }
 });
 
+// ------------------------------------------------- the selected job's actions
+// The action bar exists so a row can be plain: no per-row buttons to mis-tap
+// on a phone, and one place where the three things you can do to a waiting
+// job (read it, reorder it, drop it) are all spelled out.
+
+on('selDetails', () => {
+  if (state.sel) showHistoryForJob(state.sel);
+});
+
+on('selUp', () => selMove(-1));
+on('selDown', () => selMove(1));
+
+/** Reorder the selected waiting job by one place and take the new order as truth. */
+async function selMove(delta) {
+  const id = state.sel;
+  if (!id) return;
+  setDisabled('selUp', true);
+  setDisabled('selDown', true);
+  try {
+    const r = await api('/api/queue/move', {
+      method: 'POST',
+      body: JSON.stringify({ id, delta }),
+    });
+    if (r.queue) state.queue = r.queue;
+    // The server answers with the whole job list, so the move lands visually
+    // in the same frame as the response instead of waiting for the next event.
+    for (const snap of r.jobs ?? []) state.jobs.set(snap.id, snap);
+  } catch (e) {
+    toast(e.message);
+  }
+  // renderQueue() comes last in BOTH paths on purpose: it re-enables the move
+  // buttons at their position-correct state (dead on the first/last row), so
+  // no finally{} may turn them back on behind its back.
+  renderQueue();
+}
+
+on('selCancel', async () => {
+  const id = state.sel;
+  if (!id) return;
+  setDisabled('selCancel', true);
+  try {
+    await api(`/api/jobs/${id}/cancel`, { method: 'POST' });
+    state.sel = null;
+    toast('cancelled');
+  } catch (e) {
+    toast(e.message);
+  } finally {
+    setDisabled('selCancel', false);
+    renderQueue();
+  }
+});
+
 /** Fold a queue message from /api/events or /api/jobs into the state. */
 function applyQueue(q) {
   if (!q) return;
@@ -1206,6 +1301,27 @@ function applyQueue(q) {
       `queue recovered — ${q.restored.jobs} job${q.restored.jobs === 1 ? '' : 's'} from before the restart` +
       `${q.restored.running ? `, ${q.restored.running} of them mid-run` : ''}`,
     );
+  }
+  // A reconnect re-read ComfyUI's queue and history to work out what had
+  // finished while we were away. When it found any, say so once: the whole
+  // point of the sweep is that finished work is NOT resubmitted, and a user
+  // who cannot see that happened has no reason to trust it. Keyed on the
+  // sweep's own timestamp for the same reason the recovery notice is.
+  const rs = q.lastResync;
+  if (rs?.ok && rs.at !== state.resyncShown
+      && (rs.collected > 0 || rs.requeued > 0 || rs.adopted > 0)) {
+    state.resyncShown = rs.at;
+    const parts = [];
+    if (rs.collected) parts.push(`${rs.collected} already finished — added to gallery`);
+    if (rs.adopted) parts.push(`${rs.adopted} picked back up`);
+    if (rs.requeued) parts.push(`${rs.requeued} sent again`);
+    toast(`resync: ${parts.join(' · ')}`);
+  } else if (rs && !rs.ok && rs.at !== state.resyncShown) {
+    // Half a judgement is worse than none, so the sweep leaves everything
+    // alone when it cannot read - and says that instead of pretending the
+    // queue it is showing is still the truth.
+    state.resyncShown = rs.at;
+    toast(`resync did not run — ${rs.problem || 'could not read ComfyUI\'s queue'}`);
   }
   renderQueue();
 }
@@ -1474,17 +1590,23 @@ function renderGallery() {
       img.onclick = () => openLightbox(entry, state.gallery);
       const acts = document.createElement('div');
       acts.className = 'acts';
-      const bUp = document.createElement('button');
-      bUp.textContent = '⤒ upscale';
-      bUp.onclick = () => { useAsUpInput(entry); showTab('upscale'); window.scrollTo(0, 0); };
       const bUse = document.createElement('button');
       bUse.textContent = '⟳ use as input';
       bUse.onclick = () => useAsInput(entry);
+      // The gallery keeps the images, History keeps where they came from: the
+      // prompt, the settings, the seeds and the captured text. This is the door
+      // between them, and it lands on THIS job's row rather than the top of the
+      // list. (A per-cell "upscale" button used to be built here too but never
+      // appended - the lightbox's⤒ upscale is that action, so it is not
+      // resurrected here.)
+      const bHist = document.createElement('button');
+      bHist.textContent = '🕘 history';
+      bHist.onclick = () => showHistoryForJob(entry.jobId);
       // No save button: every image is already written to the download folder
       // as its run finishes, so a second copy is noise. The one exception is an
       // image whose download failed, and that is now labelled rather than
       // silently missing - "retry downloads" at the top fetches those back.
-      acts.append(bUse);
+      acts.append(bUse, bHist);
       if (entry.localPath == null) {
         // Outside .acts on purpose: that bar only appears on tap/hover, and the
         // whole point of this marker is that it is visible without touching it.
@@ -1582,8 +1704,9 @@ function renderHistory() {
     //     loadHistory();
     //   } catch (e) { toast(e.message); }
     // };
-    // top.append(p, x);
-    card.append(top);
+    // top.append(p, x);   ← the delete button's line took the PROMPT with it:
+    top.append(p);         // the row built its text and then dropped it on the floor,
+    card.append(top);      // so the prompt "disappeared" from every history row.
 
     const s = entry.settings ?? {};
     const isUpscale = (entry.kind ?? s.kind) === 'upscale';
@@ -1814,6 +1937,42 @@ function renderHistory() {
     card.onclick = () => restoreHistory(entry);
     wrap.append(card);
   }
+
+  // A jump from elsewhere (the queue's Details button, a gallery cell's
+  // history button) lands here after the list has been rebuilt: find the row
+  // that belongs to that job, bring it into view, and mark it for a moment so
+  // the eye can find it among a hundred entries. Entries fold by prompt, so a
+  // job can sit inside a row that remembers several jobIds.
+  if (state.histFlash) {
+    const want = state.histFlash;
+    state.histFlash = null;
+    const at = state.history.findIndex(
+      (e) => e.jobId === want || (e.jobIds ?? []).includes(want),
+    );
+    if (at >= 0) {
+      const card = wrap.children?.[at];
+      if (card) {
+        card.classList.add('flash');
+        card.scrollIntoView({ block: 'center' });
+        setTimeout(() => card.classList.remove('flash'), 2400);
+      }
+    } else {
+      toast('no history entry for that job (yet)');
+    }
+  }
+}
+
+/**
+ * Open the History tab on one job's entry.
+ *
+ * The entry may not be in the list yet (a job that has only just started) and
+ * the list itself is re-read on every visit, so the target travels as a flag
+ * rather than as a position: renderHistory picks it up after the fetch lands.
+ */
+function showHistoryForJob(jobId) {
+  if (!jobId) return;
+  state.histFlash = jobId;
+  showTab('history');
 }
 
 /**

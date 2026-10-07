@@ -237,7 +237,9 @@ different files and share no node ids.
 job. Tap a job header to fold its images away — the folded set is remembered, so
 a long gallery stays readable between reloads. `⟳ use as input` drops an image
 into the next free reference slot, `⤒ upscale this` opens the Upscale tab with it
-already in place, and an upscale job's group is marked `⤒` so it is never confused
+already in place, `🕘 history` jumps to the History entry for the outputs you are
+looking at (useful when the gallery cell has scrolled far from where that job's
+prompt is filed), and an upscale job's group is marked `⤒` so it is never confused
 with a generation.
 
 **History** tab is the prompt memory. Every prompt you submit is written to
@@ -245,8 +247,9 @@ with a generation.
 errors out. Tap an entry and the whole thing comes back: the prompt text, the
 settings that produced it (enhance, turbo, steps, megapixels, batch × shuffle,
 prompt refresh) and the reference images you attached. Nothing is submitted —
-you land on the Generate tab and press Generate, or edit first. `×` forgets one
-entry, `clear` forgets all.
+you land on the Generate tab and press Generate, or edit first. `clear` forgets
+the whole list (forgetting one entry at a time has no button any more — its line
+is the very one that, commented out, once swallowed every prompt in the list).
 
 Two details worth knowing:
 
@@ -267,6 +270,11 @@ Two details worth knowing:
   reopens the **Upscale** tab instead of Generate — multiplier, target size, batch,
   guidance, seed and download toggle all come back, along with the image itself
   when the gallery still has it.
+- **Jumps land on the right row.** The queue bar's `details` and a gallery cell's
+  `🕘 history` hand History the *job's* id, and the entry is matched by that id —
+  including inside a folded row that remembers several jobs — then brought into
+  view and flashed briefly. A job that has no entry yet says so in a toast instead
+  of landing nowhere.
 
 ### What the app remembers
 
@@ -342,14 +350,26 @@ the same progress without losing your place.
 Above the Generate button a queue strip shows everything in flight:
 
 - `▶` with a progress bar — the job ComfyUI is chewing on right now.
-- `⏳ queued 2 of 3` — waiting its turn, with a `×` to drop it. Upscale rows are
-  prefixed `⤒`.
+- `⏳ queued 2 of 3` — waiting its turn; tap the row to select it and the bar below
+  takes it from there (`cancel` drops it). Upscale rows are prefixed `⤒`.
 - `✓ done · 6 img` — the most recent finished job that isn't the one on screen.
   **Tap its prompt to bring that job's results up.**
 
 The detail panel always follows whatever is actually running, so you never have to
 watch a finished job. It repaints itself after a page reload too — the server
 replays the current job list on connect.
+
+**Tapping a job's row selects it, and a bar under the queue offers what you can do
+to it** — `details`, `move up`, `move down`, `cancel` — instead of four tiny
+buttons repeated down every row, which on a phone is a column of mis-taps. The
+row itself is only outlined; the bar names the job it is about, so `move up`
+never acts on the wrong one. Only a job in flight can be selected (a finished
+row lets go of itself), the arrows are greyed out where a move would clamp
+straight back to the same spot — first and last place, or the job that is
+already running — and `details` jumps to that job's entry in History, flashed
+and scrolled to even when the entry was folded into a row several runs deep.
+Moving is allowed while the queue is held: order is worth setting up before you
+resume.
 
 **The queue is saved to disk.** `data/queue.json` holds everything in flight, so a
 killed server, a dead battery or an accidental `npm` restart does not throw the
@@ -447,6 +467,27 @@ and **nothing is lost**:
 Resume is always a deliberate tap. When the health check notices ComfyUI is back
 the dot turns amber and says `back online` with a `press resume` toast — it will
 not start four generations behind your back just because a ping succeeded.
+
+**Resuming always resyncs first**, because while the app was away, ComfyUI may
+have finished work it will never report back. Before anything is sent, the app
+re-reads ComfyUI's queue and history and judges every job that was in flight —
+one prompt at a time, from evidence, never a guess:
+
+- **Finished while you were away** → the run is collected as if it had come back
+  over the wire: images into the gallery, the enhanced wording into History, the
+  run marked done. It is *not* submitted again — which is the whole point, and a
+  toast counts what was found (`resync: 2 already finished — added to gallery`).
+- **Still known to ComfyUI** → left exactly as it was and watched to the end.
+- **Gone from ComfyUI entirely** (its queue forgot it) → sent again with its
+  **original seed**, so the retry is the same work, not a re-roll.
+- **Sent, but the response was lost** → the app recognises the run by the
+  fingerprint it took of the payload *before* sending, adopts the prompt that
+  is already sitting in ComfyUI's queue, and does not post it a second time.
+
+If ComfyUI's queue cannot be read at all, the sweep judges **nothing** — half a
+judgement would re-send finished work or abandon undone work — and the toast
+says `resync did not run` with the reason instead. A sweep never half-completes
+a job it cannot fully prove.
 
 `send all to ComfyUI` is disabled while the queue is held for a lost connection
 (there is nowhere to send it to yet); the pause bar stays visible even over an

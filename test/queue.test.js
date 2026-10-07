@@ -19,7 +19,7 @@ const WORKFLOW_POSTPROMPT_DEFAULT = WORKFLOW['256'].inputs.value;
 const WORKFLOW_RAW_DEFAULT = WORKFLOW['44'].inputs.value;
 
 /** Point the whole app at a throwaway root + a given ComfyUI port. */
-function useTempRoot(port) {
+async function useTempRoot(port) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'mobile-cfy-queue-'));
   init(root);
   saveConfig({
@@ -34,7 +34,7 @@ function useTempRoot(port) {
   });
   runner.resetClient();
   // A pause left behind by an earlier test would silently swallow the next one.
-  runner.resume();
+  await runner.resume();
   return root;
 }
 
@@ -42,11 +42,11 @@ function useTempRoot(port) {
  * The runner is a module singleton, so a job left held by one test would still
  * be in the queue for the next one. Every test ends by calling this.
  */
-function cleanup() {
+async function cleanup() {
   for (const j of runner.list()) {
     if (['queued', 'running', 'paused'].includes(j.status)) runner.cancel(j.id);
   }
-  runner.resume();
+  await runner.resume();
 }
 
 const JOB = (prompt, batch = 1) => ({
@@ -83,7 +83,7 @@ function autoFinish(comfy) {
 
 test('submit all hands the running job\'s tail AND the waiting jobs to ComfyUI', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const a = runner.enqueue(JOB('bulk alpha', 2));
     const b = runner.enqueue(JOB('bulk beta', 1));
@@ -131,7 +131,7 @@ test('submit all hands the running job\'s tail AND the waiting jobs to ComfyUI',
     assert.equal(fs.existsSync(paths().downloadDir), true);
     assert.equal(snapA.runs[0].promptText.startsWith('enhanced:'), true);
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -139,7 +139,7 @@ test('submit all hands the running job\'s tail AND the waiting jobs to ComfyUI',
 
 test('send everything never re-sends a run that is already on its way', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   const gate = comfy.stallNext();
   try {
     const a = runner.enqueue(JOB('bulk race', 2));
@@ -162,7 +162,7 @@ test('send everything never re-sends a run that is already on its way', async ()
     assert.notEqual(firstRun.seed, secondRun.seed, 'a re-send would have burnt a second seed');
   } finally {
     gate.release();
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -171,7 +171,7 @@ test('send everything never re-sends a run that is already on its way', async ()
 test('a lost connection holds the queue instead of failing the job', async () => {
   // Nothing is listening on this port, which is what leaving the network looks
   // like from the server's side.
-  const root = useTempRoot(1);
+  const root = await useTempRoot(1);
   try {
     const a = runner.enqueue(JOB('offline one', 2));
     const q = await waitFor(() => (runner.queueState().paused ? runner.queueState() : null), 'the queue to hold');
@@ -190,14 +190,14 @@ test('a lost connection holds the queue instead of failing the job', async () =>
     assert.equal(snap.runs.every((r) => r.status === 'pending' && !r.promptId && r.endedAt === null), true);
     assert.match(snap.error, /ComfyUI at http:\/\/127\.0\.0\.1:1/);
   } finally {
-    cleanup();
+    await cleanup();
     dropRoot(root);
   }
 });
 
 test('requests can still be built while the queue is held, and resume finishes them all', async () => {
   // Start with no server at all, queue work offline, then bring one up.
-  const root = useTempRoot(1);
+  const root = await useTempRoot(1);
   const comfy = await startFakeComfyUI({ mode: 'instant' });
   try {
     const a = runner.enqueue(JOB('built offline a', 2));
@@ -208,7 +208,7 @@ test('requests can still be built while the queue is held, and resume finishes t
 
     saveConfig({ comfy: { host: '127.0.0.1', port: comfy.port, timeoutMs: 5000 } });
     runner.resetClient();
-    assert.equal(runner.resume().paused, false);
+    assert.equal((await runner.resume()).paused, false);
 
     await waitFor(() => runner.get(a.id).status === 'done', 'A to finish after the resume');
     await waitFor(() => runner.get(b.id).status === 'done', 'B to finish after the resume');
@@ -220,7 +220,7 @@ test('requests can still be built while the queue is held, and resume finishes t
     assert.equal(runner.queueState().paused, false);
     assert.equal(runner.queueState().waiting, 0);
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -228,7 +228,7 @@ test('requests can still be built while the queue is held, and resume finishes t
 
 test('cancel after a bulk submit calls ComfyUI\'s delete for the prompt that never started', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const a = runner.enqueue(JOB('cancel me', 2));
     await waitFor(() => comfy.state.prompts.length === 1, 'the first run');
@@ -249,7 +249,7 @@ test('cancel after a bulk submit calls ComfyUI\'s delete for the prompt that nev
     await waitFor(() => runner.get(a.id).status === 'cancelled', 'the job to settle as cancelled');
     assert.equal(runner.get(a.id).summary.done, 0);
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -257,7 +257,7 @@ test('cancel after a bulk submit calls ComfyUI\'s delete for the prompt that nev
 
 test('a manual pause holds the queue and resume starts it again', async () => {
   const comfy = await startFakeComfyUI({ mode: 'instant' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const held = runner.pause('manual');
     assert.equal(held.paused, true);
@@ -268,11 +268,11 @@ test('a manual pause holds the queue and resume starts it again', async () => {
     assert.equal(runner.get(a.id).status, 'queued', 'a manual pause does not start anything');
     assert.equal(comfy.state.prompts.length, 0);
 
-    assert.equal(runner.resume().paused, false);
+    assert.equal((await runner.resume()).paused, false);
     await waitFor(() => runner.get(a.id).status === 'done', 'the held job to run after the resume');
     assert.equal(comfy.state.prompts.length, 1);
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -315,7 +315,7 @@ test('one look at the queue separates queued from running, and says how far back
 
 test("a run's timer starts when ComfyUI begins it, not when the phone hands it over", async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual', holdStart: true });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const a = runner.enqueue(JOB('timer alpha', 2));
     await waitFor(() => comfy.state.prompts.length === 1, 'the first prompt to be handed over');
@@ -351,7 +351,7 @@ test("a run's timer starts when ComfyUI begins it, not when the phone hands it o
       assert.equal(Date.parse(r.endedAt) >= Date.parse(r.startedAt), true, 'and the end is never before the start');
     }
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -359,7 +359,7 @@ test("a run's timer starts when ComfyUI begins it, not when the phone hands it o
 
 test('a prompt cleared out of the queue never grows a timer, because it never generated', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual', holdStart: true });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const a = runner.enqueue(JOB('lost prompt', 1));
     await waitFor(() => comfy.state.prompts.length === 1, 'the prompt to be handed over');
@@ -375,7 +375,7 @@ test('a prompt cleared out of the queue never grows a timer, because it never ge
     await waitFor(() => runner.get(a.id).status === 'error', 'the run to be told the prompt is gone');
     assert.equal(runner.get(a.id).runs[0].startedAt, null, 'it never ran, so it has no generating time');
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -383,7 +383,7 @@ test('a prompt cleared out of the queue never grows a timer, because it never ge
 
 test('a pinned seed reaches every run of the job, and the history row', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const a = runner.enqueue({ ...JOB('pinned seed', 3), seed: '1234567' });
     await waitFor(() => comfy.state.prompts.length === 1, 'the first prompt to be handed over');
@@ -413,7 +413,7 @@ test('a pinned seed reaches every run of the job, and the history row', async ()
     assert.deepEqual(row.seeds, [1234567, 1234567, 1234567]);
     assert.equal(row.settings.seed, 1234567, 'and the pinned value comes back with the prompt');
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -421,7 +421,7 @@ test('a pinned seed reaches every run of the job, and the history row', async ()
 
 test('a job without a seed still rolls a fresh one per run', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const a = runner.enqueue(JOB('random seed', 2));
     await waitFor(() => comfy.state.prompts.length === 1, 'the first prompt');
@@ -445,7 +445,7 @@ test('a job without a seed still rolls a fresh one per run', async () => {
     const row = saved.entries.find((e) => e.jobId === a.id);
     assert.equal(row.settings.seed, null);
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -456,7 +456,7 @@ test('an upscale job runs on the shared queue and its output lands in the galler
   // which node to answer on - otherwise "the image arrived" would prove nothing
   // about which graph ran.
   const comfy = await startFakeComfyUI({ mode: 'manual', saveNode: 508, textNode: null });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const up = runner.enqueue(UPSCALE(2, { seed: '4242' }));
     const gen = runner.enqueue(JOB('a generate behind the upscale', 1));
@@ -499,7 +499,7 @@ test('an upscale job runs on the shared queue and its output lands in the galler
     assert.equal(row.settings.scale, 2);
     assert.deepEqual(row.seeds, [4242]);
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -507,7 +507,7 @@ test('an upscale job runs on the shared queue and its output lands in the galler
 
 test('scale to a target size carries the width and height into both switches', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual', saveNode: 508, textNode: null });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     // A generate job first, so this also proves the upscale can queue BEHIND the
     // other tab - the shared queue is FIFO, not "generates first".
@@ -538,7 +538,7 @@ test('scale to a target size carries the width and height into both switches', a
     assert.equal(wf['544'].inputs.value, 'keep the grain');
     assert.equal(wf['522'].inputs.value.includes('Enhance this image'), true, 'the base prompt is left alone');
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -546,7 +546,7 @@ test('scale to a target size carries the width and height into both switches', a
 
 test('a postprompt reaches node 256 and comes back in the saved history row', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   const stop = autoFinish(comfy);
   try {
     // Enhanced path. The prompt goes to node 41 (the enhance toggle sends it
@@ -596,14 +596,14 @@ test('a postprompt reaches node 256 and comes back in the saved history row', as
     assert.equal(rows.find((r) => r.jobId === plain.id).settings.postprompt, '');
   } finally {
     stop();
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
 });
 
-test('an upscale with no image is refused before anything is queued', () => {
-  const root = useTempRoot(8188);
+test('an upscale with no image is refused before anything is queued', async () => {
+  const root = await useTempRoot(8188);
   try {
     const before = runner.list().length;
     assert.throws(
@@ -616,7 +616,7 @@ test('an upscale with no image is refused before anything is queued', () => {
     );
     assert.equal(runner.list().length, before, 'nothing reached the queue');
   } finally {
-    cleanup();
+    await cleanup();
     dropRoot(root);
   }
 });
@@ -625,7 +625,7 @@ test("ComfyUI's own work holds a new job instead of queueing behind it", async (
   // Another device on the same ComfyUI is mid-generation. That prompt is
   // invisible from here until somebody looks at /queue.
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     comfy.foreign(1);
     const a = runner.enqueue(JOB('should wait its turn', 2));
@@ -655,7 +655,7 @@ test("ComfyUI's own work holds a new job instead of queueing behind it", async (
     assert.equal(comfy.state.prompts.length, 2, 'both runs went once the queue was free');
     assert.equal(runner.queueState().paused, false);
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -663,7 +663,7 @@ test("ComfyUI's own work holds a new job instead of queueing behind it", async (
 
 test('send all is the way past a hold for ComfyUI\'s own queue', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     comfy.foreign(2);
     const a = runner.enqueue(JOB('held anyway', 1));
@@ -692,7 +692,7 @@ test('send all is the way past a hold for ComfyUI\'s own queue', async () => {
     stop();
     assert.equal(comfy.state.prompts.length, 2, 'each job was submitted exactly once');
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -703,7 +703,7 @@ test("the app's own prompts in ComfyUI's queue never hold the queue behind itsel
   // sitting in ComfyUI, and the next job would read them as somebody else's work
   // and wait for a queue only we can empty.
   const comfy = await startFakeComfyUI({ mode: 'manual' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     const a = runner.enqueue(JOB('first', 2));
     const b = runner.enqueue(JOB('second', 1));
@@ -717,7 +717,7 @@ test("the app's own prompts in ComfyUI's queue never hold the queue behind itsel
     stop();
     assert.equal(comfy.state.prompts.length, 3, '3 runs, each submitted exactly once');
   } finally {
-    cleanup();
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
@@ -727,7 +727,7 @@ test('a queue probe that fails is not read as a busy queue', async () => {
   // A ComfyUI that answers /prompt and /history but not /queue. "Cannot tell" is
   // not "busy": holding on a failed read would strand the phone over a blip.
   const comfy = await startFakeComfyUI({ mode: 'instant' });
-  const root = useTempRoot(comfy.port);
+  const root = await useTempRoot(comfy.port);
   try {
     comfy.state.queueFail = true;
     const a = runner.enqueue(JOB('unreadable queue', 1));
@@ -736,7 +736,111 @@ test('a queue probe that fails is not read as a busy queue', async () => {
     assert.equal(runner.queueState().paused, false);
   } finally {
     comfy.state.queueFail = false;
-    cleanup();
+    await cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('move reorders the waiting jobs, announces it, and refuses the impossible', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = await useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue(JOB('order alpha'));
+    const b = runner.enqueue(JOB('order beta'));
+    const c = runner.enqueue(JOB('order gamma'));
+    await waitFor(() => comfy.state.prompts.length === 1, "A's first run");
+
+    // The waiting order as the queue reports it. A is running, so it holds no
+    // position at all - #pump took it out of the list when it started.
+    const order = () => runner.list()
+      .filter((j) => j.queuePosition != null)
+      .sort((x, y) => x.queuePosition - y.queuePosition)
+      .map((j) => j.id);
+    assert.equal(runner.get(a.id).queuePosition, null, 'the running job holds no position');
+    assert.deepEqual(order(), [b.id, c.id]);
+
+    const updates = [];
+    let strips = 0;
+    const onUpdate = (snap) => updates.push(snap.id);
+    const onQueue = () => { strips += 1; };
+    runner.on('update', onUpdate);
+    runner.on('queue', onQueue);
+    try {
+      assert.equal(runner.move(c.id, -1), true, 'C moves up one place');
+      assert.deepEqual(order(), [c.id, b.id]);
+      assert.ok(updates.includes(b.id), 'the job it overtook was told');
+      assert.ok(updates.includes(c.id), 'and so was C');
+      assert.ok(strips >= 1, 'the queue strip was told');
+
+      assert.equal(runner.move(c.id, -1), false, 'C is already first: clamped, so it stays');
+      assert.deepEqual(order(), [c.id, b.id]);
+
+      assert.equal(runner.move(c.id, 99), true, 'a silly distance still lands on the last place');
+      assert.deepEqual(order(), [b.id, c.id]);
+      assert.equal(runner.move(c.id, 99), false, 'and now it is last, so it stays there');
+      assert.equal(runner.move(c.id, 0), false, 'a zero delta changes nothing');
+
+      assert.equal(runner.move(a.id, 1), false, 'the running job is not waiting at all');
+      assert.equal(runner.move('no-such-job', 1), false, 'nor does a job that does not exist');
+      assert.deepEqual(order(), [b.id, c.id], 'every refusal left the order alone');
+    } finally {
+      runner.off('update', onUpdate);
+      runner.off('queue', onQueue);
+    }
+
+    // Drain: a job still running here would outlive the fake and hand the next
+    // test a held queue instead of a clean one.
+    const stop = autoFinish(comfy);
+    try {
+      for (const j of [a, b, c]) {
+        await waitFor(() => runner.get(j.id).status === 'done', 'the queue to drain', 25000);
+      }
+    } finally {
+      stop();
+    }
+  } finally {
+    await cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('a move reorders only our own list: it posts nothing and re-runs nothing', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = await useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue(JOB('move alpha'));
+    const b = runner.enqueue(JOB('move beta'));
+    const c = runner.enqueue(JOB('move gamma'));
+    await waitFor(() => comfy.state.prompts.length === 1, "A's first run");
+
+    // Reorder the two waiting jobs while A is out at ComfyUI. The move must be
+    // a pure change to our own list: no prompt posted, no run restarted.
+    const handedOver = comfy.state.prompts.length;
+    const inFlightId = comfy.state.prompts[0].id;
+    assert.equal(runner.move(c.id, -1), true, 'C moves up while A runs');
+    assert.equal(
+      comfy.state.prompts.length,
+      handedOver,
+      'and not one extra prompt was posted by the move',
+    );
+    assert.equal(comfy.state.prompts[0].id, inFlightId, "A's own prompt was left alone");
+
+    const stop = autoFinish(comfy);
+    try {
+      for (const j of [a, b, c]) {
+        await waitFor(() => runner.get(j.id).status === 'done', 'the queue to drain', 25000);
+      }
+    } finally {
+      stop();
+    }
+    // C runs where we put it - ahead of B - and each job ran exactly once, so
+    // the reorder never turned into a re-submit.
+    const texts = comfy.state.prompts.map(textOf);
+    assert.deepEqual(texts, ['move alpha', 'move gamma', 'move beta']);
+  } finally {
+    await cleanup();
     await comfy.close();
     dropRoot(root);
   }
