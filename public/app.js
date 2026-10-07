@@ -30,7 +30,11 @@ const $ = (id) => document.getElementById(id) ?? document.createElement('div');
  */
 const on = (id, fn) => { const el = $(id); if (el) el.onclick = fn; };
 const setDisabled = (id, v) => { const el = $(id); if (el) el.disabled = v; };
-const setHidden = (id, v) => { const el = $(id); if (el) el.hidden = !v; };
+// `v` IS the `hidden` property: true hides, false shows - same side-up as its
+// siblings and every call site (`closePickModal` passes true to CLOSE). An
+// earlier `!` here flipped all 22 callers at once, which is why the input
+// resolution under the upscale thumbnail was written and never appeared.
+const setHidden = (id, v) => { const el = $(id); if (el) el.hidden = v; };
 const setText = (id, v) => { const el = $(id); if (el) el.textContent = v ?? ''; };
 const api = async (path, opts = {}) => {
   const res = await fetch(path, {

@@ -352,6 +352,43 @@ test('the picked image’s own size is read off its thumbnail and printed', () =
   assert.match(app, /from '\.\/upmath\.js'/);
 });
 
+test('the size note is actually SHOWN: the helper and its callers agree on which way is up', () => {
+  // Everything above can pass while the line still never appears, because
+  // visibility is `setHidden`'s job and its polarity must match the calls that
+  // use it. This ran once already: a stray `!` in the helper inverted all 22
+  // call sites, so `setHidden('upSlotNote', !note)` computed `hidden = note` -
+  // the note was hidden exactly when it had text to say (m10577: "it does not
+  // show"). So execute the real source, don't grep it.
+  const helper = app.match(/const setHidden = \(id, v\) => \{[^}]*\}/);
+  assert.ok(helper, 'the setHidden helper is where the reader thinks it is');
+  const el = { hidden: true };
+  const setHidden = new Function('$', `${helper[0]}\nreturn setHidden;`)((() => el));
+
+  // Its siblings pass `v` straight through (`disabled = v`, `textContent = v`),
+  // and every call site talks native-side-up: false opens the pick modal, true
+  // closes it. The helper has to be the same way round.
+  assert.match(app, /setDisabled = \(id, v\) => \{ const el = \$\(id\); if \(el\) el\.disabled = v; \}/);
+  assert.match(app, /setHidden\('pickModal', false\)/, 'false opens');
+  assert.match(app, /setHidden\('pickModal', true\)/, 'true closes');
+
+  setHidden('x', false);
+  assert.equal(el.hidden, false, 'false must show the element');
+  setHidden('x', true);
+  assert.equal(el.hidden, true, 'true must hide it');
+
+  // And the pair that matters, line for line: write the text, then un-hide the
+  // note - executed from the file so a future flip of either side fails here.
+  const pair = app.match(/setText\('upSlotNote',[^;]*;\s*setHidden\('upSlotNote',[^;]*;/);
+  assert.ok(pair, 'the note is written and its visibility set on the same path');
+  const setText = (id, v) => { el.textContent = v; };
+  const drive = new Function('setHidden', 'setText', 'note', pair[0]);
+  drive(setHidden, setText, '1024 × 768 → 2048 × 1536');
+  assert.equal(el.hidden, false, 'a note WITH text must be visible under the thumbnail');
+  assert.equal(el.textContent, '1024 × 768 → 2048 × 1536');
+  drive(setHidden, setText, '');
+  assert.equal(el.hidden, true, 'and with nothing to say it stays hidden');
+});
+
 test('a hold for ComfyUI\'s own queue says so and keeps send all alive', () => {
   const strip = app.slice(app.indexOf('function renderQueue'), app.indexOf("on('queueToggle'"));
   // "Send all to ComfyUI" is the escape hatch the hold was designed around, so
