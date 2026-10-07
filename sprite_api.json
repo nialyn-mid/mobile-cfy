@@ -35,7 +35,7 @@
         0
       ],
       "negative_prompt": "",
-      "resolution": 1024,
+      "resolution": 0,
       "width": [
         "13",
         0
@@ -65,32 +65,16 @@
   },
   "5": {
     "inputs": {
-      "value": "Enhance this image to high resolution while preserving the original composition, lighting, and atmosphere. Keep the original input style."
+      "value": "this girl is a bubbly, energetic and extroverted girl who is very expressive and optimistic. "
     },
     "class_type": "PrimitiveStringMultiline",
     "_meta": {
       "title": "Personality Prompt"
     }
   },
-  "6": {
-    "inputs": {
-      "conditioning": [
-        "4",
-        0
-      ],
-      "clip": [
-        "2",
-        0
-      ]
-    },
-    "class_type": "PromptEnhancerReleaseTextEncoder",
-    "_meta": {
-      "title": "Release Text Encoder (VRAM)"
-    }
-  },
   "7": {
     "inputs": {
-      "image": "S7_00188_.png"
+      "image": "2496x1664__00005_.png"
     },
     "class_type": "LoadImage",
     "_meta": {
@@ -185,7 +169,7 @@
         0
       ],
       "positive": [
-        "6",
+        "4",
         0
       ],
       "negative": [
@@ -204,7 +188,7 @@
   },
   "22": {
     "inputs": {
-      "seed": 0
+      "seed": 848966966796335
     },
     "class_type": "SeedNode",
     "_meta": {
@@ -536,7 +520,7 @@
   },
   "50": {
     "inputs": {
-      "value": 0
+      "value": 3
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -605,7 +589,7 @@
         0
       ],
       "end_at_step": [
-        "216",
+        "380",
         0
       ],
       "return_with_leftover_noise": "enable",
@@ -614,7 +598,7 @@
         0
       ],
       "positive": [
-        "6",
+        "4",
         0
       ],
       "negative": [
@@ -643,11 +627,11 @@
   "56": {
     "inputs": {
       "filename_prefix": [
-        "172:165",
+        "315:308",
         0
       ],
       "images": [
-        "172:166",
+        "315:309",
         0
       ]
     },
@@ -793,7 +777,7 @@
   },
   "215": {
     "inputs": {
-      "value": 15
+      "value": 18
     },
     "class_type": "PrimitiveInt",
     "_meta": {
@@ -817,11 +801,11 @@
   "226": {
     "inputs": {
       "filename_prefix": [
-        "225:217",
+        "389:381",
         0
       ],
       "images": [
-        "225:218",
+        "389:382",
         0
       ]
     },
@@ -833,11 +817,11 @@
   "236": {
     "inputs": {
       "filename_prefix": [
-        "235:227",
+        "398:390",
         0
       ],
       "images": [
-        "235:228",
+        "398:391",
         0
       ]
     },
@@ -849,11 +833,11 @@
   "275": {
     "inputs": {
       "filename_prefix": [
-        "276:267",
+        "407:399",
         0
       ],
       "images": [
-        "276:268",
+        "407:400",
         0
       ]
     },
@@ -865,11 +849,11 @@
   "285": {
     "inputs": {
       "filename_prefix": [
-        "286:277",
+        "416:408",
         0
       ],
       "images": [
-        "286:278",
+        "416:409",
         0
       ]
     },
@@ -881,11 +865,11 @@
   "295": {
     "inputs": {
       "filename_prefix": [
-        "296:287",
+        "425:417",
         0
       ],
       "images": [
-        "296:288",
+        "425:418",
         0
       ]
     },
@@ -897,11 +881,11 @@
   "305": {
     "inputs": {
       "filename_prefix": [
-        "306:297",
+        "434:426",
         0
       ],
       "images": [
-        "306:298",
+        "434:427",
         0
       ]
     },
@@ -910,7 +894,204 @@
       "title": "Save Image"
     }
   },
-  "172:165": {
+  "307": {
+    "inputs": {
+      "conditioning_1": [
+        "4",
+        1
+      ],
+      "conditioning_2": [
+        "315:312",
+        1
+      ]
+    },
+    "class_type": "ConditioningCombine",
+    "_meta": {
+      "title": "Conditioning (Combine)"
+    }
+  },
+  "364": {
+    "inputs": {
+      "conditioning_1": [
+        "389:385",
+        1
+      ],
+      "conditioning_2": [
+        "398:394",
+        1
+      ]
+    },
+    "class_type": "ConditioningCombine",
+    "_meta": {
+      "title": "Conditioning (Combine)"
+    }
+  },
+  "365": {
+    "inputs": {
+      "conditioning_1": [
+        "407:403",
+        1
+      ],
+      "conditioning_2": [
+        "416:412",
+        1
+      ]
+    },
+    "class_type": "ConditioningCombine",
+    "_meta": {
+      "title": "Conditioning (Combine)"
+    }
+  },
+  "366": {
+    "inputs": {
+      "conditioning_1": [
+        "425:421",
+        1
+      ],
+      "conditioning_2": [
+        "434:430",
+        1
+      ]
+    },
+    "class_type": "ConditioningCombine",
+    "_meta": {
+      "title": "Conditioning (Combine)"
+    }
+  },
+  "369": {
+    "inputs": {
+      "conditioning_1": [
+        "365",
+        0
+      ],
+      "conditioning_2": [
+        "366",
+        0
+      ]
+    },
+    "class_type": "ConditioningCombine",
+    "_meta": {
+      "title": "Conditioning (Combine)"
+    }
+  },
+  "370": {
+    "inputs": {
+      "conditioning_1": [
+        "307",
+        0
+      ],
+      "conditioning_2": [
+        "364",
+        0
+      ]
+    },
+    "class_type": "ConditioningCombine",
+    "_meta": {
+      "title": "Conditioning (Combine)"
+    }
+  },
+  "371": {
+    "inputs": {
+      "conditioning_1": [
+        "370",
+        0
+      ],
+      "conditioning_2": [
+        "369",
+        0
+      ]
+    },
+    "class_type": "ConditioningCombine",
+    "_meta": {
+      "title": "Conditioning (Combine)"
+    }
+  },
+  "372": {
+    "inputs": {
+      "conditioning": [
+        "371",
+        0
+      ],
+      "clip": [
+        "2",
+        0
+      ]
+    },
+    "class_type": "PromptEnhancerReleaseTextEncoder",
+    "_meta": {
+      "title": "Release Text Encoder (VRAM)"
+    }
+  },
+  "373": {
+    "inputs": {
+      "source": [
+        "372",
+        0
+      ]
+    },
+    "class_type": "PreviewAny",
+    "_meta": {
+      "title": "Graph Sink"
+    }
+  },
+  "375": {
+    "inputs": {
+      "string": [
+        "373",
+        0
+      ],
+      "start": 0,
+      "end": 0
+    },
+    "class_type": "StringSubstring",
+    "_meta": {
+      "title": "Substring"
+    }
+  },
+  "378": {
+    "inputs": {
+      "input1": [
+        "379",
+        0
+      ]
+    },
+    "class_type": "ConvertAny2Int",
+    "_meta": {
+      "title": "Convert to Int"
+    }
+  },
+  "379": {
+    "inputs": {
+      "string_a": [
+        "375",
+        0
+      ],
+      "string_b": "0",
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text"
+    }
+  },
+  "380": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "216",
+        0
+      ],
+      "int_2": [
+        "378",
+        0
+      ]
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "VRAM Wait"
+    }
+  },
+  "315:308": {
     "inputs": {
       "string_a": [
         "51",
@@ -927,7 +1108,7 @@
       "title": "Concatenate Text"
     }
   },
-  "172:166": {
+  "315:309": {
     "inputs": {
       "x": [
         "48",
@@ -943,7 +1124,7 @@
         0
       ],
       "source": [
-        "172:167",
+        "315:310",
         0
       ],
       "mask": [
@@ -956,10 +1137,10 @@
       "title": "Image Composite Masked"
     }
   },
-  "172:167": {
+  "315:310": {
     "inputs": {
       "samples": [
-        "172:168",
+        "315:311",
         0
       ],
       "vae": [
@@ -972,7 +1153,7 @@
       "title": "VAE Decode"
     }
   },
-  "172:168": {
+  "315:311": {
     "inputs": {
       "add_noise": "enable",
       "noise_seed": [
@@ -991,7 +1172,7 @@
         0
       ],
       "end_at_step": [
-        "172:212",
+        "315:377",
         0
       ],
       "return_with_leftover_noise": "disable",
@@ -1000,11 +1181,11 @@
         0
       ],
       "positive": [
-        "172:170",
+        "315:312",
         0
       ],
       "negative": [
-        "172:169",
+        "315:312",
         1
       ],
       "latent_image": [
@@ -1017,10 +1198,10 @@
       "title": "KSampler (Advanced)"
     }
   },
-  "172:169": {
+  "315:312": {
     "inputs": {
       "prompts": [
-        "172:171",
+        "315:313",
         0
       ],
       "negative_prompt": "",
@@ -1052,19 +1233,7 @@
       "title": "Text Encode Casual"
     }
   },
-  "172:170": {
-    "inputs": {
-      "conditioning": [
-        "172:169",
-        0
-      ]
-    },
-    "class_type": "PromptEnhancerReleaseTextEncoder",
-    "_meta": {
-      "title": "Release Text Encoder (VRAM)"
-    }
-  },
-  "172:171": {
+  "315:313": {
     "inputs": {
       "string_a": [
         "10",
@@ -1081,10 +1250,13 @@
       "title": "Concatenate Text"
     }
   },
-  "172:212": {
+  "315:314": {
     "inputs": {
       "operation": "subtraction",
-      "int_1": 1,
+      "int_1": [
+        "214",
+        0
+      ],
       "int_2": 1
     },
     "class_type": "CyclistMathInt",
@@ -1092,7 +1264,24 @@
       "title": "Int Math"
     }
   },
-  "225:217": {
+  "315:377": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "315:314",
+        0
+      ],
+      "int_2": [
+        "378",
+        0
+      ]
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "389:381": {
     "inputs": {
       "string_a": [
         "51",
@@ -1109,7 +1298,7 @@
       "title": "Concatenate Text"
     }
   },
-  "225:218": {
+  "389:382": {
     "inputs": {
       "x": [
         "48",
@@ -1125,7 +1314,7 @@
         0
       ],
       "source": [
-        "225:219",
+        "389:383",
         0
       ],
       "mask": [
@@ -1138,10 +1327,10 @@
       "title": "Image Composite Masked"
     }
   },
-  "225:219": {
+  "389:383": {
     "inputs": {
       "samples": [
-        "225:220",
+        "389:384",
         0
       ],
       "vae": [
@@ -1154,7 +1343,7 @@
       "title": "VAE Decode"
     }
   },
-  "225:220": {
+  "389:384": {
     "inputs": {
       "add_noise": "enable",
       "noise_seed": [
@@ -1173,7 +1362,7 @@
         0
       ],
       "end_at_step": [
-        "225:224",
+        "389:388",
         0
       ],
       "return_with_leftover_noise": "disable",
@@ -1182,11 +1371,11 @@
         0
       ],
       "positive": [
-        "225:222",
+        "389:385",
         0
       ],
       "negative": [
-        "225:221",
+        "389:385",
         1
       ],
       "latent_image": [
@@ -1199,10 +1388,10 @@
       "title": "KSampler (Advanced)"
     }
   },
-  "225:221": {
+  "389:385": {
     "inputs": {
       "prompts": [
-        "225:223",
+        "389:386",
         0
       ],
       "negative_prompt": "",
@@ -1234,19 +1423,7 @@
       "title": "Text Encode Casual"
     }
   },
-  "225:222": {
-    "inputs": {
-      "conditioning": [
-        "225:221",
-        0
-      ]
-    },
-    "class_type": "PromptEnhancerReleaseTextEncoder",
-    "_meta": {
-      "title": "Release Text Encoder (VRAM)"
-    }
-  },
-  "225:223": {
+  "389:386": {
     "inputs": {
       "string_a": [
         "10",
@@ -1263,10 +1440,13 @@
       "title": "Concatenate Text"
     }
   },
-  "225:224": {
+  "389:387": {
     "inputs": {
       "operation": "subtraction",
-      "int_1": 1,
+      "int_1": [
+        "214",
+        0
+      ],
       "int_2": 1
     },
     "class_type": "CyclistMathInt",
@@ -1274,7 +1454,24 @@
       "title": "Int Math"
     }
   },
-  "235:227": {
+  "389:388": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "389:387",
+        0
+      ],
+      "int_2": [
+        "378",
+        0
+      ]
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "398:390": {
     "inputs": {
       "string_a": [
         "51",
@@ -1291,7 +1488,7 @@
       "title": "Concatenate Text"
     }
   },
-  "235:228": {
+  "398:391": {
     "inputs": {
       "x": [
         "48",
@@ -1307,7 +1504,7 @@
         0
       ],
       "source": [
-        "235:229",
+        "398:392",
         0
       ],
       "mask": [
@@ -1320,10 +1517,10 @@
       "title": "Image Composite Masked"
     }
   },
-  "235:229": {
+  "398:392": {
     "inputs": {
       "samples": [
-        "235:230",
+        "398:393",
         0
       ],
       "vae": [
@@ -1336,7 +1533,7 @@
       "title": "VAE Decode"
     }
   },
-  "235:230": {
+  "398:393": {
     "inputs": {
       "add_noise": "enable",
       "noise_seed": [
@@ -1355,7 +1552,7 @@
         0
       ],
       "end_at_step": [
-        "235:234",
+        "398:397",
         0
       ],
       "return_with_leftover_noise": "disable",
@@ -1364,11 +1561,11 @@
         0
       ],
       "positive": [
-        "235:232",
+        "398:394",
         0
       ],
       "negative": [
-        "235:231",
+        "398:394",
         1
       ],
       "latent_image": [
@@ -1381,10 +1578,10 @@
       "title": "KSampler (Advanced)"
     }
   },
-  "235:231": {
+  "398:394": {
     "inputs": {
       "prompts": [
-        "235:233",
+        "398:395",
         0
       ],
       "negative_prompt": "",
@@ -1416,19 +1613,7 @@
       "title": "Text Encode Casual"
     }
   },
-  "235:232": {
-    "inputs": {
-      "conditioning": [
-        "235:231",
-        0
-      ]
-    },
-    "class_type": "PromptEnhancerReleaseTextEncoder",
-    "_meta": {
-      "title": "Release Text Encoder (VRAM)"
-    }
-  },
-  "235:233": {
+  "398:395": {
     "inputs": {
       "string_a": [
         "10",
@@ -1445,10 +1630,13 @@
       "title": "Concatenate Text"
     }
   },
-  "235:234": {
+  "398:396": {
     "inputs": {
       "operation": "subtraction",
-      "int_1": 1,
+      "int_1": [
+        "214",
+        0
+      ],
       "int_2": 1
     },
     "class_type": "CyclistMathInt",
@@ -1456,7 +1644,24 @@
       "title": "Int Math"
     }
   },
-  "276:267": {
+  "398:397": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "398:396",
+        0
+      ],
+      "int_2": [
+        "378",
+        0
+      ]
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "407:399": {
     "inputs": {
       "string_a": [
         "51",
@@ -1473,7 +1678,7 @@
       "title": "Concatenate Text"
     }
   },
-  "276:268": {
+  "407:400": {
     "inputs": {
       "x": [
         "48",
@@ -1489,7 +1694,7 @@
         0
       ],
       "source": [
-        "276:269",
+        "407:401",
         0
       ],
       "mask": [
@@ -1502,10 +1707,10 @@
       "title": "Image Composite Masked"
     }
   },
-  "276:269": {
+  "407:401": {
     "inputs": {
       "samples": [
-        "276:270",
+        "407:402",
         0
       ],
       "vae": [
@@ -1518,7 +1723,7 @@
       "title": "VAE Decode"
     }
   },
-  "276:270": {
+  "407:402": {
     "inputs": {
       "add_noise": "enable",
       "noise_seed": [
@@ -1537,7 +1742,7 @@
         0
       ],
       "end_at_step": [
-        "276:274",
+        "407:406",
         0
       ],
       "return_with_leftover_noise": "disable",
@@ -1546,11 +1751,11 @@
         0
       ],
       "positive": [
-        "276:272",
+        "407:403",
         0
       ],
       "negative": [
-        "276:271",
+        "407:403",
         1
       ],
       "latent_image": [
@@ -1563,10 +1768,10 @@
       "title": "KSampler (Advanced)"
     }
   },
-  "276:271": {
+  "407:403": {
     "inputs": {
       "prompts": [
-        "276:273",
+        "407:404",
         0
       ],
       "negative_prompt": "",
@@ -1598,19 +1803,7 @@
       "title": "Text Encode Casual"
     }
   },
-  "276:272": {
-    "inputs": {
-      "conditioning": [
-        "276:271",
-        0
-      ]
-    },
-    "class_type": "PromptEnhancerReleaseTextEncoder",
-    "_meta": {
-      "title": "Release Text Encoder (VRAM)"
-    }
-  },
-  "276:273": {
+  "407:404": {
     "inputs": {
       "string_a": [
         "10",
@@ -1627,10 +1820,13 @@
       "title": "Concatenate Text"
     }
   },
-  "276:274": {
+  "407:405": {
     "inputs": {
       "operation": "subtraction",
-      "int_1": 1,
+      "int_1": [
+        "214",
+        0
+      ],
       "int_2": 1
     },
     "class_type": "CyclistMathInt",
@@ -1638,7 +1834,24 @@
       "title": "Int Math"
     }
   },
-  "286:277": {
+  "407:406": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "407:405",
+        0
+      ],
+      "int_2": [
+        "378",
+        0
+      ]
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "416:408": {
     "inputs": {
       "string_a": [
         "51",
@@ -1655,7 +1868,7 @@
       "title": "Concatenate Text"
     }
   },
-  "286:278": {
+  "416:409": {
     "inputs": {
       "x": [
         "48",
@@ -1671,7 +1884,7 @@
         0
       ],
       "source": [
-        "286:279",
+        "416:410",
         0
       ],
       "mask": [
@@ -1684,10 +1897,10 @@
       "title": "Image Composite Masked"
     }
   },
-  "286:279": {
+  "416:410": {
     "inputs": {
       "samples": [
-        "286:280",
+        "416:411",
         0
       ],
       "vae": [
@@ -1700,7 +1913,7 @@
       "title": "VAE Decode"
     }
   },
-  "286:280": {
+  "416:411": {
     "inputs": {
       "add_noise": "enable",
       "noise_seed": [
@@ -1719,7 +1932,7 @@
         0
       ],
       "end_at_step": [
-        "286:284",
+        "416:415",
         0
       ],
       "return_with_leftover_noise": "disable",
@@ -1728,11 +1941,11 @@
         0
       ],
       "positive": [
-        "286:282",
+        "416:412",
         0
       ],
       "negative": [
-        "286:281",
+        "416:412",
         1
       ],
       "latent_image": [
@@ -1745,10 +1958,10 @@
       "title": "KSampler (Advanced)"
     }
   },
-  "286:281": {
+  "416:412": {
     "inputs": {
       "prompts": [
-        "286:283",
+        "416:413",
         0
       ],
       "negative_prompt": "",
@@ -1780,19 +1993,7 @@
       "title": "Text Encode Casual"
     }
   },
-  "286:282": {
-    "inputs": {
-      "conditioning": [
-        "286:281",
-        0
-      ]
-    },
-    "class_type": "PromptEnhancerReleaseTextEncoder",
-    "_meta": {
-      "title": "Release Text Encoder (VRAM)"
-    }
-  },
-  "286:283": {
+  "416:413": {
     "inputs": {
       "string_a": [
         "10",
@@ -1809,10 +2010,13 @@
       "title": "Concatenate Text"
     }
   },
-  "286:284": {
+  "416:414": {
     "inputs": {
       "operation": "subtraction",
-      "int_1": 1,
+      "int_1": [
+        "214",
+        0
+      ],
       "int_2": 1
     },
     "class_type": "CyclistMathInt",
@@ -1820,7 +2024,24 @@
       "title": "Int Math"
     }
   },
-  "296:287": {
+  "416:415": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "416:414",
+        0
+      ],
+      "int_2": [
+        "378",
+        0
+      ]
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "425:417": {
     "inputs": {
       "string_a": [
         "51",
@@ -1837,7 +2058,7 @@
       "title": "Concatenate Text"
     }
   },
-  "296:288": {
+  "425:418": {
     "inputs": {
       "x": [
         "48",
@@ -1853,7 +2074,7 @@
         0
       ],
       "source": [
-        "296:289",
+        "425:419",
         0
       ],
       "mask": [
@@ -1866,10 +2087,10 @@
       "title": "Image Composite Masked"
     }
   },
-  "296:289": {
+  "425:419": {
     "inputs": {
       "samples": [
-        "296:290",
+        "425:420",
         0
       ],
       "vae": [
@@ -1882,7 +2103,7 @@
       "title": "VAE Decode"
     }
   },
-  "296:290": {
+  "425:420": {
     "inputs": {
       "add_noise": "enable",
       "noise_seed": [
@@ -1901,7 +2122,7 @@
         0
       ],
       "end_at_step": [
-        "296:294",
+        "425:424",
         0
       ],
       "return_with_leftover_noise": "disable",
@@ -1910,11 +2131,11 @@
         0
       ],
       "positive": [
-        "296:292",
+        "425:421",
         0
       ],
       "negative": [
-        "296:291",
+        "425:421",
         1
       ],
       "latent_image": [
@@ -1927,10 +2148,10 @@
       "title": "KSampler (Advanced)"
     }
   },
-  "296:291": {
+  "425:421": {
     "inputs": {
       "prompts": [
-        "296:293",
+        "425:422",
         0
       ],
       "negative_prompt": "",
@@ -1962,19 +2183,7 @@
       "title": "Text Encode Casual"
     }
   },
-  "296:292": {
-    "inputs": {
-      "conditioning": [
-        "296:291",
-        0
-      ]
-    },
-    "class_type": "PromptEnhancerReleaseTextEncoder",
-    "_meta": {
-      "title": "Release Text Encoder (VRAM)"
-    }
-  },
-  "296:293": {
+  "425:422": {
     "inputs": {
       "string_a": [
         "10",
@@ -1991,10 +2200,13 @@
       "title": "Concatenate Text"
     }
   },
-  "296:294": {
+  "425:423": {
     "inputs": {
       "operation": "subtraction",
-      "int_1": 1,
+      "int_1": [
+        "214",
+        0
+      ],
       "int_2": 1
     },
     "class_type": "CyclistMathInt",
@@ -2002,7 +2214,24 @@
       "title": "Int Math"
     }
   },
-  "306:297": {
+  "425:424": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "425:423",
+        0
+      ],
+      "int_2": [
+        "378",
+        0
+      ]
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "434:426": {
     "inputs": {
       "string_a": [
         "51",
@@ -2019,7 +2248,7 @@
       "title": "Concatenate Text"
     }
   },
-  "306:298": {
+  "434:427": {
     "inputs": {
       "x": [
         "48",
@@ -2035,7 +2264,7 @@
         0
       ],
       "source": [
-        "306:299",
+        "434:428",
         0
       ],
       "mask": [
@@ -2048,10 +2277,10 @@
       "title": "Image Composite Masked"
     }
   },
-  "306:299": {
+  "434:428": {
     "inputs": {
       "samples": [
-        "306:300",
+        "434:429",
         0
       ],
       "vae": [
@@ -2064,7 +2293,7 @@
       "title": "VAE Decode"
     }
   },
-  "306:300": {
+  "434:429": {
     "inputs": {
       "add_noise": "enable",
       "noise_seed": [
@@ -2083,7 +2312,7 @@
         0
       ],
       "end_at_step": [
-        "306:304",
+        "434:433",
         0
       ],
       "return_with_leftover_noise": "disable",
@@ -2092,11 +2321,11 @@
         0
       ],
       "positive": [
-        "306:302",
+        "434:430",
         0
       ],
       "negative": [
-        "306:301",
+        "434:430",
         1
       ],
       "latent_image": [
@@ -2109,10 +2338,10 @@
       "title": "KSampler (Advanced)"
     }
   },
-  "306:301": {
+  "434:430": {
     "inputs": {
       "prompts": [
-        "306:303",
+        "434:431",
         0
       ],
       "negative_prompt": "",
@@ -2144,19 +2373,7 @@
       "title": "Text Encode Casual"
     }
   },
-  "306:302": {
-    "inputs": {
-      "conditioning": [
-        "306:301",
-        0
-      ]
-    },
-    "class_type": "PromptEnhancerReleaseTextEncoder",
-    "_meta": {
-      "title": "Release Text Encoder (VRAM)"
-    }
-  },
-  "306:303": {
+  "434:431": {
     "inputs": {
       "string_a": [
         "10",
@@ -2173,11 +2390,31 @@
       "title": "Concatenate Text"
     }
   },
-  "306:304": {
+  "434:432": {
     "inputs": {
       "operation": "subtraction",
-      "int_1": 1,
+      "int_1": [
+        "214",
+        0
+      ],
       "int_2": 1
+    },
+    "class_type": "CyclistMathInt",
+    "_meta": {
+      "title": "Int Math"
+    }
+  },
+  "434:433": {
+    "inputs": {
+      "operation": "addition",
+      "int_1": [
+        "434:432",
+        0
+      ],
+      "int_2": [
+        "378",
+        0
+      ]
     },
     "class_type": "CyclistMathInt",
     "_meta": {

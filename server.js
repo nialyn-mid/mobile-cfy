@@ -22,6 +22,7 @@ import * as history from './lib/history.js';
 import { listEntries, findEntry, clearIndex, updateEntry, missingDownloads } from './lib/gallery.js';
 import { runner } from './lib/runner.js';
 import { sweep as sweepDownloadsNow, startRetryTicker } from './lib/retry.js';
+import { readCounter } from './lib/spritecounter.js';
 import { downloadImage, uniquePath, renderTemplate, sanitizeFilename } from './lib/download.js';
 import { shutdownPermission } from './lib/shutdown.js';
 
@@ -212,6 +213,7 @@ route('GET', '/api/config', async (req, res) => {
       workflow: P.workflow,
       enhancelessWorkflow: P.enhancelessWorkflow,
       upscaleWorkflow: P.upscaleWorkflow,
+      spriteWorkflow: P.spriteWorkflow,
       downloadDir: P.downloadDir,
       dataDir: P.dataDir,
     },
@@ -232,11 +234,13 @@ route('PUT', '/api/config', async (req, res) => {
     staleBindings: saved.staleBindings ?? [],
     staleUpscaleBindings: saved.staleUpscaleBindings ?? [],
     staleEnhancelessBindings: saved.staleEnhancelessBindings ?? [],
+    staleSpriteBindings: saved.staleSpriteBindings ?? [],
     resolved: {
       downloadDir: paths().downloadDir,
       workflow: paths().workflow,
       enhancelessWorkflow: paths().enhancelessWorkflow,
       upscaleWorkflow: paths().upscaleWorkflow,
+      spriteWorkflow: paths().spriteWorkflow,
     },
   });
 });
@@ -255,12 +259,13 @@ route('POST', '/api/config/bindings/reset', async (req, res) => {
   const bindings = validateBindings(saved[kind.map], kind.file());
   json(res, 200, {
     config: saved,
-    kind: body?.kind === 'upscale' || body?.kind === 'enhanceless' ? body.kind : 'generate',
+    kind: body?.kind === 'upscale' || body?.kind === 'enhanceless' || body?.kind === 'sprite' ? body.kind : 'generate',
     bindings,
     ok: bindings.every((b) => b.ok),
     staleBindings: saved.staleBindings ?? [],
     staleUpscaleBindings: saved.staleUpscaleBindings ?? [],
     staleEnhancelessBindings: saved.staleEnhancelessBindings ?? [],
+    staleSpriteBindings: saved.staleSpriteBindings ?? [],
   });
 });
 
@@ -269,7 +274,7 @@ route('POST', '/api/config/validate', async (req, res) => {
   const kind = bindingKind(body?.kind);
   const bindings = validateBindings(state.config[kind.map], kind.file());
   json(res, 200, {
-    kind: body?.kind === 'upscale' || body?.kind === 'enhanceless' ? body.kind : 'generate',
+    kind: body?.kind === 'upscale' || body?.kind === 'enhanceless' || body?.kind === 'sprite' ? body.kind : 'generate',
     bindings,
     ok: bindings.every((b) => b.ok),
   });
@@ -326,6 +331,12 @@ route('GET', '/api/enhanceless/workflow', readWorkflowRoute(paths().enhancelessW
 route('PUT', '/api/enhanceless/workflow', writeWorkflowRoute(paths().enhancelessWorkflow));
 route('GET', '/api/upscale/workflow', readWorkflowRoute(paths().upscaleWorkflow));
 route('PUT', '/api/upscale/workflow', writeWorkflowRoute(paths().upscaleWorkflow));
+route('GET', '/api/sprite/workflow', readWorkflowRoute(paths().spriteWorkflow));
+route('PUT', '/api/sprite/workflow', writeWorkflowRoute(paths().spriteWorkflow));
+// What the NEXT sprite job will number its files with, so the form can say so
+// before submitting. Read-only - the claim happens inside enqueue, after
+// validation, and a peek that reserved a number would leak one per page load.
+route('GET', '/api/sprite/counter', async (req, res) => json(res, 200, { next: readCounter() }));
 
 route('POST', '/api/uploads', async (req, res) => {
   const buf = await readBody(req);
@@ -384,6 +395,7 @@ const BINDING_KINDS = {
   generate: { map: 'bindings', file: () => P.workflow, label: 'Generate' },
   enhanceless: { map: 'enhancelessBindings', file: () => P.enhancelessWorkflow, label: 'Enhanceless' },
   upscale: { map: 'upscaleBindings', file: () => P.upscaleWorkflow, label: 'Upscale' },
+  sprite: { map: 'spriteBindings', file: () => P.spriteWorkflow, label: 'Sprite' },
 };
 function bindingKind(kind) {
   return BINDING_KINDS[kind] ?? BINDING_KINDS.generate;
@@ -413,6 +425,18 @@ route('POST', '/api/upscale', async (req, res) => {
   bindingGuard(state.config.upscaleBindings, P.upscaleWorkflow);
   const body = await readJson(req);
   const job = runner.enqueue({ ...(body ?? {}), kind: 'upscale' });
+  json(res, 202, job);
+});
+
+// The Sprite tab. Third graph, third map, same queue - the pre-flight checks
+// sprite_api.json because the three graphs share no node ids, so a stale id
+// saved in one must not be reported as missing from another. The Filename
+// Counter is claimed inside enqueue, after validation, so a refused request
+// never burns a number.
+route('POST', '/api/sprite', async (req, res) => {
+  bindingGuard(state.config.spriteBindings, P.spriteWorkflow);
+  const body = await readJson(req);
+  const job = runner.enqueue({ ...(body ?? {}), kind: 'sprite' });
   json(res, 202, job);
 });
 
@@ -809,10 +833,14 @@ server.listen(c.server.port, c.server.host, () => {
   const upBad = fs.existsSync(P.upscaleWorkflow)
     ? validateBindings(c.upscaleBindings, P.upscaleWorkflow).filter((r) => !r.ok)
     : [];
+  const spBad = fs.existsSync(P.spriteWorkflow)
+    ? validateBindings(c.spriteBindings, P.spriteWorkflow).filter((r) => !r.ok)
+    : [];
   for (const [label, list] of [
     ['binding', bad],
     ['enhanceless binding', enBad],
     ['upscale binding', upBad],
+    ['sprite binding', spBad],
   ]) {
     if (!list.length) continue;
     console.warn(`  ⚠ ${list.length} ${label} problem(s):`);

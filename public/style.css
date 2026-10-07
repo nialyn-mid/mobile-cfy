@@ -75,6 +75,52 @@ main { padding: 14px; }
 }
 .tabbtn.active { color: var(--fg); border-top-color: var(--accent); }
 
+/* The Create page's second bar: sits directly ABOVE the main one (41px = the
+   main button's height: 13px line + 13px*2 padding + 2px border) and is
+   hidden by the page logic while any other page is open. body.two-bars adds
+   room for it so the last field is never trapped behind both bars. */
+.subtabs {
+  position: fixed; left: 0; right: 0; bottom: calc(41px + env(safe-area-inset-bottom));
+  z-index: 20;
+  display: flex; max-width: 720px; margin: 0 auto;
+  background: rgba(17, 19, 26, .96);
+  backdrop-filter: blur(8px);
+  border-top: 1px solid var(--line);
+}
+.subtabs[hidden] { display: none; }
+.subbtn {
+  flex: 1; padding: 11px 4px; border: 0; background: none;
+  color: var(--dim); font: 600 13px/1 system-ui, sans-serif; cursor: pointer;
+  border-top: 2px solid transparent;
+}
+.subbtn.active { color: var(--fg); border-top-color: var(--accent); }
+body.two-bars { padding-bottom: calc(112px + env(safe-area-inset-bottom)); }
+
+/* Panes of the Create page - same show/hide rule as .tab, its own class so
+   page-level and mode-level switching cannot collide. */
+.subpane { display: none; }
+.subpane.active { display: block; }
+
+/* Live count of everything still in flight, on the Queue button. The pulse
+   runs once per increase (the class is re-added after a reflow), so it reads
+   as "that was just added" rather than a permanent shimmer. */
+.qbadge {
+  display: inline-block; min-width: 19px; padding: 0 6px; margin-left: 6px;
+  border-radius: 999px; background: var(--accent); color: #fff;
+  font: 700 11px/19px system-ui, sans-serif; text-align: center;
+  vertical-align: middle;
+}
+.qbadge[hidden] { display: none; }
+@keyframes qbadge-pulse {
+  0% { transform: scale(1); }
+  35% { transform: scale(1.45); }
+  100% { transform: scale(1); }
+}
+.qbadge.pulse { animation: qbadge-pulse .5s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  .qbadge.pulse { animation: none; }
+}
+
 /* ----------------------------------------------------------------- cards */
 .card {
   background: var(--panel);

@@ -138,18 +138,42 @@ test('a commented-out button cannot take the rest of the page down with it', () 
   }
 });
 
-test('the upscale tab and its shared queue panel are wired into the markup', () => {
-  // The queue strip and the job panel cannot be copied into the second tab -
-  // ids must stay unique - so both tabs name the one section they share.
-  const shared = html.match(/<section class="tab[^"]*" data-for="([^"]+)"/);
-  assert.ok(shared, 'the shared queue section is missing');
-  assert.deepEqual(shared[1].split(' ').sort(), ['generate', 'upscale']);
-  for (const id of ['queueBar', 'queueList', 'jobPanel', 'genErr']) {
-    const inside = html.slice(html.indexOf('data-for=')).includes(`id="${id}"`);
-    assert.equal(inside, true, `${id} must live in the shared section, not in one tab`);
+test('the three forms are panes of one Create page, and the queue is its own page', () => {
+  // The old design had the queue in a shared section that slid between the
+  // Generate and Upscale tabs (data-for). The queue now owns a page in the
+  // bottom bar, and Generate/Upscale/Sprite are panes of the Create page
+  // switched by the second bar - so what must hold instead:
+  //   * one section per page, five of them, one button each;
+  //   * the queue strip inside the Queue page, not floating above the forms;
+  //   * genErr above the panes, because all three forms report into it.
+  const sections = [...html.matchAll(/<section id="tab-([\w-]+)"[^>]*>/g)].map((m) => m[1]);
+  assert.deepEqual(sections.sort(), ['create', 'gallery', 'history', 'queue', 'settings'],
+    'five pages, no stray tab- ids');
+  assert.equal(html.includes('data-for='), false,
+    'the shared-section mechanism is gone with the queue move');
+
+  const queueStart = html.indexOf('id="tab-queue"');
+  const queueSec = html.slice(queueStart, html.indexOf('<section id="tab-', queueStart + 1));
+  for (const id of ['queueBar', 'queueList', 'jobPanel', 'selBar', 'queueEmpty']) {
+    assert.ok(queueSec.includes(`id="${id}"`), `${id} must live in the Queue page`);
   }
-  assert.equal(htmlIds.has('tab-upscale'), true);
-  assert.match(html, /class="tabbtn" data-tab="upscale"/);
+  const createStart = html.indexOf('id="tab-create"');
+  const createSec = html.slice(createStart, html.indexOf('<section id="tab-', createStart + 1));
+  assert.ok(createSec.includes('id="genErr"'), 'genErr sits above the panes so every form can report');
+  assert.equal(queueSec.includes('id="genErr"'), false);
+
+  // The three panes and the second bar that switches them.
+  for (const id of ['sub-generate', 'sub-upscale', 'sub-sprite']) {
+    assert.ok(createSec.includes(`id="${id}"`), `${id} is missing from the Create page`);
+  }
+  const subbtns = [...html.matchAll(/data-sub="([\w-]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(subbtns.sort(), ['generate', 'sprite', 'upscale']);
+
+  // Five pages, five buttons - and the Queue button carries its live count.
+  const tabbtns = [...html.matchAll(/class="tabbtn(?: active)?" data-tab="([\w-]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(tabbtns.sort(), ['create', 'gallery', 'history', 'queue', 'settings']);
+  assert.match(html, /data-tab="queue"[^>]*>Queue<span class="qbadge" id="queueBadge" hidden>/,
+    'the Queue button owns the added-to-queue badge');
 });
 
 test('the tabs list every section that is reachable', () => {
@@ -179,8 +203,8 @@ test('the page asks for the real icon, and the file is where the link points', (
   assert.doesNotMatch(html, /data:image\/svg/);
 });
 
-test('the bindings card offers all three graphs, each wired end to end', () => {
-  // Three workflows means three rows of Settings: the select picks the kind,
+test('the bindings card offers all four graphs, each wired end to end', () => {
+  // Four workflows means four rows of Settings: the select picks the kind,
   // app.js maps kind -> map, workflow route, stale report and upload input, and
   // index.html supplies the option, the upload button and its file name. Any
   // layer missing an entry silently falls back to 'generate' - the exact bug
@@ -191,7 +215,7 @@ test('the bindings card offers all three graphs, each wired end to end', () => {
   // earlier dropdown (the aspect one) and yields an empty window.
   const select = liveHtml.slice(start, liveHtml.indexOf('</select>', start));
   const options = [...select.matchAll(/<option value="([^"]+)"/g)].map((m) => m[1]);
-  assert.deepEqual(options, ['generate', 'enhanceless', 'upscale'],
+  assert.deepEqual(options, ['generate', 'enhanceless', 'upscale', 'sprite'],
     'the kind select lists every graph, in Settings order');
 
   assert.equal(htmlIds.has('enWfUpload'), true, 'the enhanceless workflow needs its own replace button');
@@ -199,18 +223,21 @@ test('the bindings card offers all three graphs, each wired end to end', () => {
     'the button names the file it replaces');
   assert.match(liveHtml, /replace workflow_api\.json<input id="wfUpload"/);
   assert.match(liveHtml, /replace upscale_api\.json<input id="upWfUpload"/);
+  assert.match(liveHtml, /replace sprite_api\.json<input id="spWfUpload"/);
 
-  // app.js: every helper is three-way, and the missing entries default to
-  // 'generate' - which is why each one has to be listed here explicitly.
-  assert.match(app, /const BIND_KINDS = \['generate', 'enhanceless', 'upscale'\]/);
+  // app.js: the kind table is one row per graph, and the missing entries fall
+  // back to 'generate' - so each kind must appear with all four of its parts.
+  assert.match(app, /const BIND_KINDS = \['generate', 'enhanceless', 'upscale', 'sprite'\]/);
   for (const [snippet, what] of [
-    [/kind === 'enhanceless'\s*\? state\.cfg\?\.enhancelessBindings/, 'bindingsFor reads the third map'],
-    [/kind === 'enhanceless'\s*\? '\/api\/enhanceless\/workflow'/, 'bindingsPath reads the third route'],
-    [/kind === 'enhanceless'\s*\? 'staleEnhancelessBindings'/, 'the stale report has its own key'],
-    [/kind === 'enhanceless'\s*\? 'workflow_api_enhanceless\.json'/, 'workflowFileFor names the third file'],
+    [/enhanceless: \{ map: 'enhancelessBindings', path: '\/api\/enhanceless\/workflow', stale: 'staleEnhancelessBindings', file: 'workflow_api_enhanceless\.json' \}/,
+      'the enhanceless row of the table'],
+    [/sprite: \{ map: 'spriteBindings', path: '\/api\/sprite\/workflow', stale: 'staleSpriteBindings', file: 'sprite_api\.json' \}/,
+      'the sprite row of the table'],
     [/\? \{ enhancelessBindings: collectBindings\(\) \}/, 'saving posts the third map under its own name'],
     [/listen\('enWfUpload', 'change', \(\) => uploadWorkflow\('enhanceless', 'enWfUpload'\)\)/,
       'the third upload input is listened to'],
+    [/listen\('spWfUpload', 'change', \(\) => uploadWorkflow\('sprite', 'spWfUpload'\)\)/,
+      'the sprite upload input is listened to'],
     [/workflow_api_enhanceless\.json \(no postprompt or prompt refresh\)/,
       'the enhance hint says what the off path runs'],
   ]) {
@@ -218,10 +245,11 @@ test('the bindings card offers all three graphs, each wired end to end', () => {
   }
 });
 
-test('the postprompt box is on the generate tab, sent, cleared, and not remembered', () => {
-  // Placement: it belongs to the prompt, not to the other tab.
-  const genStart = html.indexOf('id="tab-generate"');
-  const gen = html.slice(genStart, html.indexOf('<section id="tab-', genStart));
+test('the postprompt box is on the generate pane, sent, cleared, and not remembered', () => {
+  // Placement: it belongs to the prompt, and Generate is a pane of the Create
+  // page now - so it must sit inside sub-generate, not in the Sprite pane.
+  const genStart = html.indexOf('id="sub-generate"');
+  const gen = html.slice(genStart, html.indexOf('id="sub-upscale"'));
   assert.match(gen, /id="postprompt"/);
   assert.equal(gen.indexOf('id="postprompt"') < gen.indexOf('id="generate"'), true, 'it sits above the Generate button');
 
@@ -266,17 +294,22 @@ test('every toggle keeps its words out of the pill', () => {
 test('the upscale Run card gives its toggle a row of its own', () => {
   // It was inside a `.row2` (2fr 1fr), which on a 360px phone is roughly a
   // 100px column - too narrow for a pill plus the words naming what it does.
+  // The sprite pane's Run card now sits after this one, so the search for OUR
+  // card is anchored before id="upscale" instead of taking the last in the
+  // whole document - that would slice backwards into an empty string.
+  const upBtn = html.indexOf('id="upscale"');
   const runCard = html.slice(
-    html.lastIndexOf('<div class="card-hd"><span>Run</span></div>'),
-    html.indexOf('id="upscale"'),
+    html.lastIndexOf('<div class="card-hd"><span>Run</span></div>', upBtn),
+    upBtn,
   );
+  assert.ok(runCard.length, 'the upscale pane has its own Run card before its button');
   assert.match(runCard, /id="upSeed"/);
   assert.match(runCard, /id="upDownload"/);
   assert.equal(/class="row[23]"/.test(runCard), false, 'the seed and the toggle must not share a grid column');
 });
 
-test('the upscale batch box is on the upscale tab, sent raw, and remembered', () => {
-  const up = html.slice(html.indexOf('id="tab-upscale"'), html.indexOf('<section id="tab-', html.indexOf('id="tab-upscale"')));
+test('the upscale batch box is on the upscale pane, sent raw, and remembered', () => {
+  const up = html.slice(html.indexOf('id="sub-upscale"'), html.indexOf('id="sub-sprite"'));
   assert.match(up, /id="upBatch"/);
   // It shares a row with the seed (two short numbers) and NOT with the toggle,
   // which got its own row after the cramped-column complaint.
@@ -316,9 +349,11 @@ test('the upscale image and its guidance are spent by the job, the settings are 
     );
   }
   assert.equal(/\$\('upScaleToDim'\)\.checked =[^=]|\$\('upDownload'\)\.checked =[^=]/.test(submit), false);
-  // The user is told what vanished, in the same words the generate tab uses.
+  // The user is told what vanished, in the same words the generate tab uses -
+  // now joined by where the job went, since the queue has its own page.
   assert.match(submit, /cleared\.push\('image'\)/);
-  assert.match(submit, /toast\(`\$\{cleared\.join\(' and '\)\} cleared`\)/);
+  assert.match(submit, /toast\(`\$\{cleared\.join\(' and '\)\} cleared · \$\{queued\}`\)/);
+  assert.match(submit, /added to queue — \$\{queueLabelOf\(job\)\}/);
 });
 
 test('the picked image’s own size is read off its thumbnail and printed', () => {

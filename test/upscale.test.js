@@ -81,8 +81,8 @@ test('the web page is served from the app, not from the data root', async (t) =>
   const res = await fetch(`${base}/`);
   assert.equal(res.status, 200, `the page must be served:\n${log}`);
   const page = await res.text();
-  assert.match(page, /id="tab-upscale"/, 'the Upscale tab is in the page');
-  assert.match(page, /data-for="generate upscale"/, 'and the shared queue is shown on both tabs');
+  assert.match(page, /id="sub-upscale"/, 'Upscale is a pane of the Create page');
+  assert.match(page, /id="tab-queue"/, 'the queue is its own page');
   for (const file of ['app.js', 'durfmt.js', 'zoommath.js', 'bindmark.js', 'style.css']) {
     const r = await fetch(`${base}/${file}`);
     assert.equal(r.status, 200, `${file} must be served`);

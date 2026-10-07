@@ -4,9 +4,17 @@ A small Node.js server with a mobile web UI that drives a ComfyUI Qwen-Image
 workflow from the phone. It replaces the old `comfy_gen.sh` Termux script and adds
 reference images, a prompt-enhance toggle, a turbo toggle, a Consistency LoRA
 toggle, a step override, an aspect-ratio picker (or the enhancer's own suggested
-one), an **Upscale tab** with its own second workflow, a prompt history you can
+one), an **Upscale pane** with its own second workflow, a **Sprite pane** that
+turns one personality prompt plus one reference image into eight expression views
+(each named by a persistent filename counter, saved into a `sprite/` subfolder), a
+prompt history you can
 re-run from, and a gallery where any generated image can be fed straight back in
 as an input.
+
+The bottom bar has five pages: **Create** (a second bar switches between
+Generate / Upscale / Sprite), **Gallery**, **History**, **Queue** (its own page,
+with a live count badge that pulses when something is added), and
+**Settings**.
 
 **No dependencies.** Node's standard library only — `npm install` is never needed,
 because installing packages in Termux is slow and occasionally broken.
@@ -61,7 +69,10 @@ Fix the token, press **resume queue**, and the jobs carry on.
 
 ## Using it
 
-**Generate** tab
+**Create** page — Generate / Upscale / Sprite panes (a second bar under the
+forms switches between them; the bottom bar's five pages are unchanged)
+
+**Generate** pane
 
 | Control | What it does |
 |---|---|
@@ -140,7 +151,7 @@ enhanced prompt, so re-submitting identical text reuses it:
   re-enhanced wording. Slow (the Qwen-VL enhancer dominates runtime), but the
   images differ in composition as well as in noise.
 
-**Upscale** tab
+**Upscale** pane
 
 A second workflow (`upscale_api.json`) with one job per image and one run each:
 
@@ -209,11 +220,11 @@ where `batch` is N separate runs:
 - It is still one job and one run, so cancelling, timing, the queue and the gallery
   all behave exactly as they do at 1 — the thumbs just show N pictures.
 
-Both tabs share **one queue**, because ComfyUI has one GPU and one queue: an
-upscale waiting behind a shuffle holds up the next generate, and the queue bar,
-the pause/send-all controls, cancel, per-run timers and shutdown handover all
-appear on both tabs. Upscale rows are marked `⤒`, and so are their gallery groups
-and history entries.
+All three panes share **one queue**, because ComfyUI has one GPU and one queue: an
+upscale waiting behind a shuffle holds up the next generate, and the queue page,
+the pause/send-all controls, cancel, per-run timers and shutdown handover are
+common to all of them. Upscale rows are marked `⤒`, sprite rows `🎭`, and so are
+their gallery groups and history entries.
 
 Upscaling one image per job is deliberate — the workflow has a single LoadImage —
 so upscaling four pictures means four jobs. They queue like anything else, and
@@ -237,6 +248,46 @@ history) needed no new code. The graph itself is read and replaced through
 The upscale graph is checked before a job is accepted, exactly like the generate
 one, and **a broken upscale binding does not block a generate**: they point at two
 different files and share no node ids.
+
+**Sprite** pane
+
+A third workflow, `sprite_api.json`, that turns **one personality prompt plus one
+reference image** into eight expression views (casual, happy, angry, embarrassed,
+startled, sad, horny, and one more). One job, one run, eight SaveImage nodes.
+
+| Control | What it does |
+|---|---|
+| Personality prompt | Node `5` (Personality Prompt). **Required** — the graph appends its own base prompt to whatever you type, so an empty half cannot run |
+| Load image | Node `7` (LoadImage). **Required**, and **one image at a time** — the graph has a single LoadImage, so a second picture is named rather than silently dropped |
+| Seed | Node `22`. Blank = a fresh roll per job (remembered on the history row, so a repeat can pin it); a number pins it across all nine samplers |
+| Filename Counter | Node `50` — read-only, shown before it is spent. The number that names this job's files |
+| Download | Whether the eight results are saved into `sprite/` under your download folder |
+
+**The filename counter is why the sprite job has a persistent record.** Every
+SaveImage's `filename_prefix` chains from node `50`, so two jobs handed the same
+number would overwrite each other's files in ComfyUI's `output/Sprite/`. The
+number is claimed **at enqueue** (a `tmp` file plus a rename, so a crash between
+submit and persist can never hand the same number out twice) and persists in
+`data/sprite-counter.json`. A request that is **refused** — empty prompt, no
+image, broken binding — never burns a number: the guard runs before the claim.
+A corrupt or missing counter file starts over at `1` rather than crashing (the
+graph itself ships a plausible value, so `0` is off-limits).
+
+**Downloads land in `sprite/`**, mirroring the graph's own `Sprite/` prefix, so
+the eight views never mix with generations in the flat folder. Gallery and
+history rows know this: they are marked `🎭` and record `kind: sprite` plus the
+counter and seed.
+
+Under the hood it is `POST /api/sprite` with
+`{slots:[{uploadId}], personality, seed, collectImages}` returning `202` and the
+same job object the other two forms return — the sprite job joins **the one
+shared queue**, so `🎭` rows are visible next to `⤒` upscales and plain
+generations. `GET /api/sprite/counter` answers with `{next}` and is a **peek**:
+it never reserves a number (a reserving peek would leak one per page load). The
+graph is read and replaced through `GET`/`PUT /api/sprite/workflow`, and the
+sprite binding map is checked against `sprite_api.json` before any job is
+accepted — a broken sprite binding blocks only sprite jobs, exactly as a broken
+upscale binding blocks only upscales.
 
 **Gallery** tab keeps every image this and previous sessions produced, grouped by
 job. Tap a job header to fold its images away — the folded set is remembered, so
@@ -272,10 +323,10 @@ Two details worth knowing:
   rows, or ones still queued) show nothing there rather than an empty box.
 - Upscale entries are marked `⤒`, carry their own chips (`×2`, `target 3000 × 2000`,
   `4 images in one pass`, `extra guidance`), and are the one thing in History that
-  reopens the **Upscale** tab instead of Generate — multiplier, target size, batch,
+  reopens the **Upscale** pane instead of Generate — multiplier, target size, batch,
   guidance, seed and download toggle all come back, along with the image itself
   when the gallery still has it.
-- **Jumps land on the right row.** The queue bar's `details` and a gallery cell's
+- **Jumps land on the right row.** The Queue page's `details` and a gallery cell's
   `🕘 history` hand History the *job's* id, and the entry is matched by that id —
   including inside a folded row that remembers several jobs — then brought into
   view and flashed briefly. A job that has no entry yet says so in a toast instead
@@ -314,17 +365,19 @@ the guidance, which belong to the image that was just submitted.
 **Settings** tab covers the ComfyUI host, the download folder, the filename
 template, and every node binding. Its **ComfyUI link** card is the written
 version of the dot in the corner — tap the dot and it lands there; see *The dot
-in the corner, and what it actually saw*. A **Generate / Upscale** switch above the
+in the corner, and what it actually saw*. A **Generate / Enhanceless / Upscale /
+Sprite** switch above the
 binding table picks which set you are editing and which graph **check bindings**
-and the node list read, so the two never get mixed up. **Check bindings**
+and the node list read, so the sets never get mixed up. **Check bindings**
 validates all of them against the workflow at once, and every row shows its own
 verdict — a broken one is marked `✗` with the reason, never a tick. That matters
 because a stale node id used to fail silently: writing `43` after that node was renamed did nothing at all, and
 the symptom was a raw prompt where an enhanced one should have been. Now three things
 stop that:
 
-- Generate and Upscale each refuse to start when any of *their* bindings is
-  broken, naming the node. A broken upscale binding does not block a generate.
+- Generate, Upscale and Sprite each refuse to start when any of *their* bindings
+  is broken, naming the node. A broken upscale binding does not block a generate,
+  and a broken sprite binding blocks only sprite jobs.
 - A binding still holding an *old untouched default* is re-pointed at startup and
   saved, so an upgraded app never keeps writing into a node that moved.
 - **Reset to defaults** puts every binding back to what this build ships with, for
@@ -341,22 +394,31 @@ that and the untouched old default are listed in `BINDING_MIGRATIONS` in
 
 ### Queueing
 
-Neither tab is ever locked. Submit as many prompts or upscales as you like while a
-job is running — each one joins an in-app queue and starts as soon as the previous
-job finishes. Only one job reaches ComfyUI at a time, which is all the hardware can
-take anyway.
+No pane is ever locked. Submit as many prompts, upscales or sprites as you like
+while a job is running — each one joins an in-app queue and starts as soon as the
+previous job finishes. Only one job reaches ComfyUI at a time, which is all the
+hardware can take anyway.
 
-**There is one queue for both tabs**, because ComfyUI has one GPU and one queue.
-An upscale added behind a shuffle waits for the same slot and is visible in the same
-strip, and the strip, the detail panel and everything below it sit under whichever
-tab you are on — you can start a batch on Generate, switch to Upscale, and watch
-the same progress without losing your place.
+**There is one queue for all three panes**, because ComfyUI has one GPU and one
+queue: a sprite waiting behind a shuffle holds up the next upscale, and the queue
+itself, the pause/send-all controls, cancel, per-run timers and shutdown handover
+all live on the **Queue** page. Upscale rows are marked `⤒` and sprite rows `🎭`,
+and so are their gallery groups and history entries.
 
-Above the Generate button a queue strip shows everything in flight:
+**The Queue button in the bottom bar carries a live count** of everything in
+flight, and it **pulses when something is added** — that is the signal that a
+submit landed, since the form itself stays put on purpose (clearing the form and
+jumping pages on every submit would lose your place mid-batch). The count hides
+itself when the queue empties, and tapping the badge takes you straight to the
+Queue page. A toast says the same thing in words: `added to queue — …`, plus
+`saving as #N` for a sprite job naming the counter it just claimed.
+
+On the Queue page the list shows everything in flight:
 
 - `▶` with a progress bar — the job ComfyUI is chewing on right now.
 - `⏳ queued 2 of 3` — waiting its turn; tap the row to select it and the bar below
-  takes it from there (`cancel` drops it). Upscale rows are prefixed `⤒`.
+  takes it from there (`cancel` drops it). Upscale rows are prefixed `⤒`, sprite
+  rows `🎭`.
 - `✓ done · 6 img` — the most recent finished job that isn't the one on screen.
   **Tap its prompt to bring that job's results up.**
 
@@ -394,7 +456,7 @@ Three details worth knowing:
 - **A job that had already finished is not run again.** The file is cleared as
   soon as the queue drains, so this only matters if the server is killed in the
   small window between finishing and the next save.
-- **If the file cannot be written, the queue bar says so** in orange rather than
+- **If the file cannot be written, the Queue page says so** in orange rather than
   pretending. A full phone, or a `data/` that has become read-only, is worth
   knowing about before you queue an hour of work.
 
@@ -447,7 +509,7 @@ server, and why not if it may not.
 
 ### Walking off the network
 
-Two buttons appear next to the queue strip while there is anything in flight:
+Two buttons appear on the Queue page while there is anything in flight:
 
 **`send all to ComfyUI`** hands every run the app is still holding over to
 ComfyUI's own queue in one go — the rest of the running job's batch *and* every
@@ -646,11 +708,11 @@ payload.
 
 ### The upscale bindings
 
-The Upscale tab has its own set, in `upscaleBindings`, checked against
+The Upscale pane has its own set, in `upscaleBindings`, checked against
 `upscale_api.json` (`upscaleWorkflowFile` names the file). Settings has a
-**Generate / Enhanceless / Upscale** switch above the binding table that switches
-which set you are editing and which graph the checks and the node list read, and
-**replace upscale_api.json** uploads a new copy of the upscale graph.
+**Generate / Enhanceless / Upscale / Sprite** switch above the binding table that
+switches which set you are editing and which graph the checks and the node list
+read, and **replace upscale_api.json** uploads a new copy of the upscale graph.
 
 | Binding | Default | Title |
 |---|---|---|
@@ -666,9 +728,29 @@ which set you are editing and which graph the checks and the node list read, and
 
 The maps are independent in every direction: `POST /api/config/validate` and
 `POST /api/config/bindings/reset` take a `{"kind": "generate" | "enhanceless" |
-"upscale"}` body to point at another one, and a stale name dropped from one map
-is reported only in that map's report key (`staleBindings`,
-`staleEnhancelessBindings`, `staleUpscaleBindings`).
+"upscale" | "sprite"}` body to point at another one, and a stale name dropped
+from one map is reported only in that map's report key (`staleBindings`,
+`staleEnhancelessBindings`, `staleUpscaleBindings`, `staleSpriteBindings`).
+
+### The sprite bindings
+
+The Sprite pane's four bindings live in `spriteBindings`, checked against
+`sprite_api.json` (`spriteWorkflowFile` names the file), and are reachable from
+the same four-way switch. **replace sprite_api.json** uploads a new copy of the
+sprite graph.
+
+| Binding | Default | Title |
+|---|---|---|
+| `personalityPrompt` | `5.value` | Personality Prompt |
+| `image` | `7.image` | Load Image |
+| `seed` | `22.seed` | Seed |
+| `filenameCounter` | `50.value` | Filename Counter |
+
+The counter binding is the one to be careful with: it is what names the eight
+output files, so it must keep pointing at node `50` in `sprite_api.json`. A
+wrong-but-present node would write into the wrong place rather than fail loudly,
+which is exactly what the Sprite pane's tests pin (binding by `_meta.title`, not
+by id alone).
 
 ### The enhanceless bindings
 
@@ -681,7 +763,7 @@ encoder and the samplers.
 Because it is a separate export, its node ids are only *coincidentally* the same
 as the normal workflow's, and a future edit to either file can desync them. So it
 gets its own map, `enhancelessBindings`, and its own Settings row behind the
-three-way switch. It declares only what that file actually has:
+four-way switch. It declares only what that file actually has:
 
 | Binding | Default | Title |
 |---|---|---|
@@ -922,7 +1004,7 @@ prompt — usually because ComfyUI itself was restarted, which empties its queue
 and history. The app cannot re-watch a prompt that no longer exists, so it says
 so instead of waiting forever. Submit it again.
 
-**The queue bar warns that nothing is being saved.** The file could not be
+**The Queue page warns that nothing is being saved.** The file could not be
 written, usually a full phone or a `data/` that has become read-only. The queue
 still works; a restart just loses it.
 
@@ -969,9 +1051,11 @@ npm test      # node --test "test/**/*.test.js"
 ```
 
 Tests cover config merging and the binding/value migrations, payload construction
-for **all three** graphs (including that enhance-off runs write node `44` in the
-enhanceless file, that the enhanceless map declares nothing that file lacks, and
-that the normal path forces `176.cond` on whatever the export says), the run
+for **all four** graphs (including that enhance-off runs write node `44` in the
+enhanceless file, that the enhanceless map declares nothing that file lacks, that
+the normal path forces `176.cond` on whatever the export says, and that the sprite
+graph receives its personality, image, seed and a genuinely-claimed counter — but
+never an unclaimed one), the run
 matrix, prompt-text capture, download naming, upload
 sniffing and multipart parsing, the history store, the bindings panel's verdict
 rendering, the page's own wiring — every id it reaches for exists in `index.html`
@@ -993,16 +1077,23 @@ under the picture (including a check that it still matches the workflow it
 transcribes), and the shut down
 route — including that a page which may not press the button is told so before it
 presses it, and the three-workflow split (the enhanceless file, its own binding
-map, one flag picking file + map + pre-flight together). 282 of them; they need
-no network and no real
+map, one flag picking file + map + pre-flight together) — and the sprite surface
+(`test/sprite.test.js`: the four bindings land in the graph that was submitted,
+the filename counter is claimed at enqueue and a refused request never spends
+one, `GET /api/sprite/counter` is a peek that reserves nothing, a broken sprite
+binding blocks only sprite jobs and resets without touching the generate map, and
+downloads land in the `sprite/` subfolder and nowhere else). 312 of them; they
+need no network and no real
 ComfyUI (`test/queue.test.js`, `test/retry.test.js`, `test/shutdown.test.js`,
-`test/upscale.test.js`, `test/enhanceless.test.js` and `test/persist.test.js`
+`test/upscale.test.js`, `test/enhanceless.test.js`, `test/sprite.test.js` and
+`test/persist.test.js`
 each run a fake ComfyUI from
 the shared `test/helpers/fakeComfy.js`). Every temp root a test creates is
 deleted again, so running the suite on the phone does not leave litter behind.
 
 `test/reset.test.js` starts a second server on port 3082, `test/shutdown.test.js`
-on 3083, `test/upscale.test.js` on 3084 and `test/enhanceless.test.js` on 3085,
+on 3083, `test/upscale.test.js` on 3084, `test/enhanceless.test.js` on 3085 and
+`test/sprite.test.js` on 3087,
 each with `MOBILE_CFY_ROOT` pointed at
 a temp directory, so they never touch the instance you are using. That temp root
 has no `public/` in it on purpose: it proves the web page is served from the app

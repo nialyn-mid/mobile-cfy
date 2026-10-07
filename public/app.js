@@ -247,33 +247,56 @@ function renderHealthDetail() {
 }
 
 // -------------------------------------------------------------------- tabs
-for (const btn of document.querySelectorAll('.tabbtn')) {
-  btn.onclick = () => {
-    document.querySelectorAll('.tabbtn').forEach((b) => b.classList.toggle('active', b === btn));
-    const name = btn.dataset.tab;
-    // A section may declare `data-for="a b"` to be SHARED: the queue strip and
-    // the job panel belong to Generate and Upscale alike, and they cannot simply
-    // be duplicated because element ids must stay unique. So they live in one
-    // section that opens on whichever of the named tabs was pressed.
-    for (const t of document.querySelectorAll('.tab')) {
-      const names = (t.dataset.for ?? '').split(/\s+/).filter(Boolean);
-      t.classList.toggle('active', names.length ? names.includes(name) : t.id === `tab-${name}`);
-    }
-    if (name === 'gallery') loadGallery();
-    if (name === 'history') loadHistory();
-    if (name === 'settings') loadSettings();
-    // A hidden textarea has no scrollHeight, so the box can only be measured
-    // once its tab is actually on screen.
-    if (name === 'generate') { autoGrow($('prompt')); autoGrow($('postprompt')); }
-    if (name === 'upscale') autoGrow($('upGuidance'));
-    window.scrollTo(0, 0);
-  };
+// The app has five PAGES (Create, Queue, Gallery, History, Settings) in the
+// bottom bar, and the Create page holds three PANES - Generate, Upscale and
+// Sprite - switched by the second bar above it. So a click on a page button
+// and a click on a pane button do different jobs, and the pane names are kept
+// as valid showTab() targets so history/gallery actions can still say
+// "take me to the form that runs this" without knowing how it is laid out.
+const SUBS = ['generate', 'upscale', 'sprite'];
+let activeSub = 'generate';
+
+/** Show one pane of the Create page (the second bar routes here by tap). */
+function showSub(name) {
+  if (!SUBS.includes(name)) return;
+  activeSub = name;
+  document.querySelectorAll('.subbtn').forEach((b) => b.classList.toggle('active', b.dataset.sub === name));
+  document.querySelectorAll('.subpane').forEach((p) => p.classList.toggle('active', p.id === `sub-${name}`));
+  // A hidden textarea has no scrollHeight, so the box can only be measured
+  // once its pane is actually on screen.
+  if (name === 'generate') { autoGrow($('prompt')); autoGrow($('postprompt')); }
+  if (name === 'upscale') autoGrow($('upGuidance'));
+  if (name === 'sprite') autoGrow($('spPrompt'));
+  window.scrollTo(0, 0);
 }
 
-/** Open a tab by name (used when a gallery or history action lands elsewhere). */
+for (const btn of document.querySelectorAll('.subbtn')) {
+  btn.onclick = () => showSub(btn.dataset.sub);
+}
+
+for (const btn of document.querySelectorAll('.tabbtn')) {
+  btn.onclick = () => showTab(btn.dataset.tab);
+}
+
+/**
+ * Open a page by name (used when a gallery or history action lands elsewhere).
+ * A pane name opens Create on that pane. The work happens here rather than via
+ * .click() because the two bars are two different controls over one page tree.
+ */
 function showTab(name) {
-  const btn = [...document.querySelectorAll('.tabbtn')].find((b) => b.dataset.tab === name);
-  if (btn) btn.click();
+  const page = SUBS.includes(name) ? 'create' : name;
+  const btn = [...document.querySelectorAll('.tabbtn')].find((b) => b.dataset.tab === page);
+  if (!btn) return;
+  document.querySelectorAll('.tabbtn').forEach((b) => b.classList.toggle('active', b === btn));
+  for (const t of document.querySelectorAll('main > section.tab')) t.classList.toggle('active', t.id === `tab-${page}`);
+  if (page === 'gallery') loadGallery();
+  if (page === 'history') loadHistory();
+  if (page === 'settings') loadSettings();
+  // The second bar and its extra padding belong to the Create page alone.
+  setHidden('subTabs', page !== 'create');
+  document.body.classList.toggle('two-bars', page === 'create');
+  window.scrollTo(0, 0);
+  if (SUBS.includes(name)) showSub(name);
 }
 
 // ------------------------------------------------------------- prompt sizing
@@ -419,8 +442,13 @@ $('fillFromGallery').onclick = async () => {
 };
 
 // ------------------------------------------------------------ upscale tab
-/** Which tab is on screen - the queue is shared, the forms are not. */
+/**
+ * Which view is on screen. The forms are panes of the Create page now, so a
+ * form name answers "is that page open on that pane" - and the check walks up
+ * to the page, because a pane of a hidden page is not on screen at all.
+ */
 function isTab(name) {
+  if (SUBS.includes(name)) return activeSub === name && isTab('create');
   return document.querySelector('section.tab.active')?.id === `tab-${name}`;
 }
 
@@ -521,9 +549,86 @@ $('upSlot').addEventListener('drop', async (e) => {
   } catch (err) { toast(err.message); }
 });
 
-// A grid of recent images, because the usual case is "upscale the one I just
+// ------------------------------------------------------------ sprite pane
+// The sprite's single reference image: the same pick/drop/paste routes as the
+// upscale slot, none of the size math - the sprite graph decides its own
+// output dimensions, the reference only steers the pose. Both of the form's
+// inputs (image + personality) are checked at submit, not here, so a half-
+// filled form is never half-discarded while typing.
+state.spImage = null;
+state.spImageUrl = null;
+
+function renderSpSlot() {
+  const wrap = $('spSlot');
+  wrap.innerHTML = '';
+  const d = document.createElement('div');
+  d.className = 'slot' + (state.spImage ? ' filled' : '');
+  if (state.spImage) {
+    const img = document.createElement('img');
+    img.alt = 'sprite reference';
+    img.src = state.spImageUrl;
+    d.append(img);
+    const x = document.createElement('button');
+    x.className = 'x';
+    x.type = 'button';
+    x.textContent = '×';
+    x.onclick = (ev) => { ev.stopPropagation(); setSpriteImage(null); };
+    d.append(x);
+  } else {
+    d.textContent = '+';
+    d.onclick = () => { $('spFilePick').value = ''; $('spFilePick').click(); };
+  }
+  wrap.append(d);
+}
+
+function setSpriteImage(value, url) {
+  state.spImage = value ?? null;
+  state.spImageUrl = value ? url : null;
+  renderSpSlot();
+}
+
+listen('spFilePick', 'change', async () => {
+  const file = $('spFilePick').files?.[0];
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  try {
+    const { uploads } = await api('/api/uploads', { method: 'POST', body: fd });
+    if (!uploads.length) return;
+    setSpriteImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+    toast('image ready for the sprite');
+  } catch (e) { toast(e.message); }
+});
+
+// drag & drop straight onto the sprite slot
+$('spSlot').addEventListener('dragover', (e) => e.preventDefault());
+$('spSlot').addEventListener('drop', async (e) => {
+  e.preventDefault();
+  const file = [...(e.dataTransfer?.files ?? [])].find((f) => f.type.startsWith('image/'));
+  if (!file) return;
+  const fd = new FormData();
+  fd.append('file', file, file.name);
+  try {
+    const { uploads } = await api('/api/uploads', { method: 'POST', body: fd });
+    setSpriteImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+  } catch (err) { toast(err.message); }
+});
+
+on('spClear', () => setSpriteImage(null));
+
+// A grid of recent images, because the usual case is "use the one I just
 // made" and picking a file from the phone's storage manager is much more work.
-on('upPickGallery', async () => {
+// The modal is shared: `pickTarget` remembers which form opened it, so the
+// chosen entry lands in that form's slot instead of a hardcoded one.
+state.pickTarget = 'upscale';
+
+function openPickModal(target) {
+  state.pickTarget = target;
+  setText('pickTitle', target === 'sprite' ? 'Pick a reference image' : 'Pick an image to upscale');
+  loadPickList();
+}
+
+async function loadPickList() {
   try {
     if (!state.galleryLoaded) await loadGallery();
   } catch { /* loadGallery already told the user */ }
@@ -547,13 +652,21 @@ on('upPickGallery', async () => {
     img.loading = 'lazy';
     b.append(img);
     b.onclick = () => {
-      useAsUpInput(entry);
+      if (state.pickTarget === 'sprite') {
+        setSpriteImage({ ref: entry.id }, `/api/gallery/${entry.id}/file`);
+        toast(`${entry.localName || entry.comfyFilename || 'image'} ready for the sprite`);
+      } else {
+        useAsUpInput(entry);
+      }
       closePickModal();
     };
     list.append(b);
   }
   setHidden('pickModal', false);
-});
+}
+
+on('upPickGallery', () => openPickModal('upscale'));
+on('spPickGallery', () => openPickModal('sprite'));
 
 function closePickModal() {
   setHidden('pickModal', true);
@@ -571,6 +684,11 @@ window.addEventListener('paste', (e) => {
   fd.append('file', file, 'pasted.png');
   e.preventDefault();
   api('/api/uploads', { method: 'POST', body: fd }).then(({ uploads }) => {
+    if (isTab('sprite')) {
+      setSpriteImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+      toast('pasted image ready for the sprite');
+      return;
+    }
     if (isTab('upscale')) {
       setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
       toast('pasted image ready to upscale');
@@ -672,6 +790,14 @@ on('helpUpBatch', (e) => {
   e.preventDefault();
   toast('how many images one pass produces - the graph samples them together, so 4 costs about the same wall clock as 1 but four times the VRAM at the target size');
 });
+on('helpSpPrompt', (e) => {
+  e.preventDefault();
+  toast('joined with the workflow\'s own base prompt and sent to all eight expression views - it is the personality, not the art style');
+});
+on('helpSpSeed', (e) => {
+  e.preventDefault();
+  toast('blank picks a fresh seed - pin one to get the same eight images again');
+});
 
 on('upscale', async () => {
   showError(null);
@@ -712,13 +838,68 @@ on('upscale', async () => {
       cleared.push('guidance');
     }
     saveForm();
-    if (cleared.length) toast(`${cleared.join(' and ')} cleared`);
+    // Both forms now say where the job went: the queue is a separate page, so
+    // a submit that produces no visible change on THIS page needs its own word.
+    const queued = `added to queue — ${queueLabelOf(job)}`;
+    if (cleared.length) toast(`${cleared.join(' and ')} cleared · ${queued}`);
+    else toast(queued);
   } catch (e) {
     if (!showBindingError(e)) showError(e.errors ? e.errors.join('\n') : e.message);
   } finally {
     setDisabled('upscale', false);
   }
 });
+
+// The Sprite pane's submit: one personality + one reference in, eight
+// expression views out. The counter is the server's, not this form's - the
+// number shown before submitting is what the job will actually spend, and the
+// form reads it back after each enqueue so the next number is always visible.
+on('sprite', async () => {
+  showError(null);
+  const personality = $('spPrompt').value.trim();
+  const errors = [];
+  if (!personality) errors.push('a personality prompt is required');
+  if (!state.spImage) errors.push('an image is required - pick the reference the sprite is drawn from');
+  if (errors.length) { showError(errors.join('\n')); return; }
+
+  setDisabled('sprite', true);
+  const seedRaw = $('spSeed').value.trim();
+  try {
+    const job = await api('/api/sprite', {
+      method: 'POST',
+      body: JSON.stringify({
+        slots: state.spImage ? [state.spImage] : [],
+        personality: $('spPrompt').value,
+        seed: seedRaw === '' ? null : seedRaw,
+        collectImages: $('spDownload').checked,
+      }),
+    });
+    trackJob(job);
+    // Same rule as the other two forms: clear what belongs to this job (the
+    // personality IS the job's prompt), keep the settings (seed, save toggle).
+    $('spPrompt').value = '';
+    autoGrow($('spPrompt'));
+    setSpriteImage(null);
+    saveForm();
+    const counter = job.spec?.counter;
+    toast(`added to queue — ${queueLabelOf(job)}${counter ? ` · saving as #${counter}` : ''}`);
+    void refreshSpriteCounter();
+  } catch (e) {
+    if (!showBindingError(e)) showError(e.errors ? e.errors.join('\n') : e.message);
+  } finally {
+    setDisabled('sprite', false);
+  }
+});
+
+/** The next Filename Counter, shown before it is spent. Fails quietly: the
+ *  form works without it, it only makes the number unsurprising. */
+async function refreshSpriteCounter() {
+  try {
+    const { next } = await api('/api/sprite/counter');
+    setText('spCounter', `next files will be numbered #${next}`);
+    setHidden('spCounter', false);
+  } catch { /* the counter lives on the server; a stale number beats a lie */ }
+}
 
 $('helpRefresh').onclick = (e) => {
   e.preventDefault();
@@ -835,6 +1016,10 @@ const FORM_IDS = [
   // a pinned seed that survives a reload would quietly re-use itself on the next
   // picture.
   'upScale', 'upScaleToDim', 'upTargetWidth', 'upTargetHeight', 'upDownload', 'upBatch',
+  // The sprite pane keeps only its save toggle: the personality is a prompt
+  // (prompt boxes are never remembered) and its seed follows the same rule as
+  // the other two forms - see the comment above.
+  'spDownload',
 ];
 
 // The workflow's own combo values for node 9 "Resolution Selector". A COMBO
@@ -894,6 +1079,20 @@ for (const id of FORM_IDS) {
 // ---------------------------------------------------------------- generate
 // The server already runs one job at a time and parks the rest, so Generate is
 // never disabled: type the next prompt and press it again while one is running.
+
+/**
+ * One short phrase for "where your job went", from the queuePosition the
+ * server stamps on the 202 snapshot: its place in line if it has one, because
+ * "3 in line" is the fact a queued submit needs, and plain "queued" when the
+ * job already started (queuePosition is null once it is running).
+ */
+function queueLabelOf(job) {
+  const pos = job?.queuePosition;
+  if (pos === 1) return 'next up';
+  if (Number.isInteger(pos) && pos > 1) return `${pos} in line`;
+  return 'queued';
+}
+
 $('generate').onclick = async () => {
   showError(null);
   const prompt = $('prompt').value.trim();
@@ -951,7 +1150,12 @@ $('generate').onclick = async () => {
     // that was just submitted, and this app is mostly used one-handed while
     // something is generating - the next prompt can wait for a scroll-up.
     if (document.activeElement === $('prompt')) $('prompt').blur();
-    if (cleared.length) toast(`${cleared.join(' and ')} cleared`);
+    // The queue lives on its own page now, so a successful submit has to say
+    // something HERE - otherwise pressing Generate on an empty form looks like
+    // nothing happened at all.
+    const queued = `added to queue — ${queueLabelOf(job)}`;
+    if (cleared.length) toast(`${cleared.join(' and ')} cleared · ${queued}`);
+    else toast(queued);
   } catch (e) {
     if (!showBindingError(e)) showError(e.errors ? e.errors.join('\n') : e.message);
   }
@@ -1025,6 +1229,28 @@ const inFlight = (j) => j.status === 'queued' || j.status === 'running' || j.sta
 /** Runs waiting in ComfyUI that nobody is watching yet. */
 const unsubmitted = (j) => j.runs?.some((r) => !r.promptId && ['pending', 'queued'].includes(r.status));
 
+// The badge on the Queue button: this is the "something was added" signal for
+// a page that no longer shows the queue itself. `lastBadge` is remembered
+// across renders so a pulse can fire only on the way UP - a settled queue
+// re-rendering (progress ticks, status flips) must not keep flashing.
+let lastBadge = 0;
+
+function renderBadge(busyLength) {
+  const badge = $('queueBadge');
+  if (!badge) return;
+  setHidden('queueBadge', busyLength === 0);
+  setText('queueBadge', String(busyLength));
+  if (busyLength > lastBadge) {
+    // Class first, then force a reflow without the class, then re-add: an
+    // animation restarts from its keyframe only if the element was visibly
+    // animated once before it plays again.
+    badge.classList.remove('pulse');
+    void badge.offsetWidth;
+    badge.classList.add('pulse');
+  }
+  lastBadge = busyLength;
+}
+
 function renderQueue() {
   const wrap = $('queueList');
   const jobs = [...state.jobs.values()];
@@ -1065,10 +1291,12 @@ function renderQueue() {
       j.status === 'running' ? '▶' : finished ? '✓' : j.status === 'paused' ? '⏸' : '⏳';
     const text = document.createElement('span');
     text.className = 'qtext';
-    // One queue holds both kinds of work, so a row says which it is: an upscale
-    // has no prompt, and its label is built from the image and the scale.
-    text.textContent = (j.kind === 'upscale' || j.spec?.kind === 'upscale' ? '⤒ ' : '')
-      + truncate(j.spec?.prompt ?? '(no prompt)', 42);
+    // One queue holds all three kinds of work, so a row says which it is: an
+    // upscale has no prompt, and its label is built from the image and the
+    // scale; a sprite is its personality, which reads like a prompt.
+    const kindMark = j.kind === 'sprite' || j.spec?.kind === 'sprite' ? '🎭 '
+      : j.kind === 'upscale' || j.spec?.kind === 'upscale' ? '⤒ ' : '';
+    text.textContent = kindMark + truncate(j.spec?.prompt ?? '(no prompt)', 42);
     text.title = 'tap to show this job';
     // One tap does both: it shows the job in the detail panel AND arms the
     // action bar under the list (details / move / cancel). Tapping the already
@@ -1184,6 +1412,14 @@ function renderQueue() {
   // Both submit buttons offer the queue, because both share it.
   setText('generate', busy.length ? 'Add to queue' : 'Generate');
   setText('upscale', busy.length ? 'Add to queue' : 'Upscale');
+  setText('sprite', busy.length ? 'Add to queue' : 'Generate sprite');
+
+  // The Queue page's own empty state: with no list at all, the page would be
+  // a blank screen, so it says where the next job will appear instead.
+  const empty = $('queueEmpty');
+  if (empty) empty.hidden = rows.length > 0 || paused;
+
+  renderBadge(busy.length);
 
   // The action bar follows the selected job. A selection whose job has left
   // the waiting list (cancelled, finished, resynced away) lets go of itself -
@@ -1393,8 +1629,10 @@ setInterval(tickTimers, 1000);
 function renderJob(job) {
   $('jobPanel').hidden = false;
   const upscale = job.kind === 'upscale' || job.spec?.kind === 'upscale';
+  const sprite = job.kind === 'sprite' || job.spec?.kind === 'sprite';
+  const kindMark = sprite ? '🎭 sprite · ' : upscale ? '⤒ upscale · ' : '';
   const s = $('jobStatus');
-  s.textContent = `${upscale ? '⤒ upscale · ' : ''}${job.status} · ${job.summary.done}/${job.summary.total} runs · ${job.summary.images} images`;
+  s.textContent = `${kindMark}${job.status} · ${job.summary.done}/${job.summary.total} runs · ${job.summary.images} images`;
   s.className = `status ${job.status}`;
 
   const cur = job.runs.find((r) => r.status === 'running') ?? job.runs[job.summary.current];
@@ -1419,6 +1657,10 @@ function renderJob(job) {
     if (cur.node != null) bits.push(`node ${cur.node}`);
     if (cur.seed != null) bits.push(`seed ${cur.seed}`);
   }
+  // The sprite's filename counter is decided when it is queued, so it is the
+  // one job detail worth showing before a run has started - it is what the
+  // eight files will be called.
+  if (sprite && job.spec?.counter != null) bits.push(`file #${job.spec.counter}`);
   if (job.error) bits.push(job.error);
   $('jobLine').textContent = bits.join(' · ');
 
@@ -1719,7 +1961,9 @@ function renderHistory() {
     card.append(top);      // so the prompt "disappeared" from every history row.
 
     const s = entry.settings ?? {};
-    const isUpscale = (entry.kind ?? s.kind) === 'upscale';
+    const kind = entry.kind ?? s.kind;
+    const isUpscale = kind === 'upscale';
+    const isSprite = kind === 'sprite';
     const meta = document.createElement('div');
     meta.className = 'hrow-meta';
     const when = new Date(entry.lastUsedAt).toLocaleString();
@@ -1728,8 +1972,9 @@ function renderHistory() {
     if (entry.results) bits.push(`${entry.results} image${entry.results > 1 ? 's' : ''}`);
     const refs = (entry.slots ?? []).filter(Boolean).length;
     // An upscale's one image is its input, not a reference, and saying
-    // "1 reference" for it would be wrong.
-    if (refs && !isUpscale) bits.push(`${refs} reference${refs > 1 ? 's' : ''}`);
+    // "1 reference" for it would be wrong - same for the sprite's reference.
+    if (refs && !isUpscale && !isSprite) bits.push(`${refs} reference${refs > 1 ? 's' : ''}`);
+    if (isSprite && s.counter !== undefined) bits.push(`file #${s.counter}`);
     meta.textContent = bits.join(' · ');
     card.append(meta);
 
@@ -1753,7 +1998,15 @@ function renderHistory() {
       c.textContent = label;
       chips.append(c);
     };
-    if (isUpscale) {
+    if (isSprite) {
+      // The sprite graph's own settings: eight views off one personality and
+      // one reference, named from the counter - none of the generate rows
+      // (enhance, turbo, megapixels) belong to it.
+      chip('sprite · 8 views', true);
+      if (s.collectImages === false) chip('no downloads', false);
+      if (s.seed !== null && s.seed !== undefined) chip(`seed pinned: ${s.seed}`, true);
+      if (s.counter !== undefined) chip(`filename counter: ${s.counter}`, true);
+    } else if (isUpscale) {
       // The upscale graph has none of the generate settings, so the row is read
       // from the ones it does have instead of printing a column of meaningless
       // "enhance on / turbo / megapixels" chips.
@@ -1819,7 +2072,7 @@ function renderHistory() {
             : 'copy blocked by the browser');
         }),
         mkBtn(seeds.length > 1 ? 'use first' : 'use', 'put this seed in the Seed box', () => {
-          useSeed(seeds[0], isUpscale ? 'upscale' : 'generate');
+          useSeed(seeds[0], kind ?? 'generate');
         }),
       );
 
@@ -1999,7 +2252,7 @@ function useEnhancedAsPrompt(text) {
   autoGrow(box);
   $('enhance').checked = false;
   saveForm();
-  document.querySelector('.tabbtn[data-tab="generate"]').click();
+  showTab('generate');
   window.scrollTo(0, 0);
   toast('enhanced prompt loaded - enhancer turned off');
 }
@@ -2021,6 +2274,13 @@ function useSeed(seed, kind = 'generate') {
     toast(`seed ${seed} loaded`);
     return;
   }
+  if (kind === 'sprite') {
+    $('spSeed').value = String(seed);
+    showTab('sprite');
+    window.scrollTo(0, 0);
+    toast(`seed ${seed} loaded`);
+    return;
+  }
   $('seed').value = String(seed);
   syncSeedUi();
   updateRunMath();
@@ -2034,13 +2294,16 @@ function useSeed(seed, kind = 'generate') {
  * the reference images. Reference images that were pruned from disk are
  * reported rather than dropped silently.
  *
- * An upscale row goes to the Upscale tab instead. The two forms have nothing in
- * common, and putting a scale factor into the megapixels box because the row
- * happened to be an upscale would be worse than doing nothing.
+ * An upscale row goes to the Upscale tab instead, and a sprite row to the
+ * Sprite pane. The forms have nothing in common, and putting a scale factor
+ * into the megapixels box because the row happened to be an upscale would be
+ * worse than doing nothing.
  */
 function restoreHistory(entry) {
   const s = entry.settings ?? {};
-  if ((entry.kind ?? s.kind) === 'upscale') return restoreUpscaleHistory(entry);
+  const kind = entry.kind ?? s.kind;
+  if (kind === 'upscale') return restoreUpscaleHistory(entry);
+  if (kind === 'sprite') return restoreSpriteHistory(entry);
   $('prompt').value = entry.prompt ?? '';
   // Older rows have no postprompt at all, so an absent field clears the box
   // instead of leaving whatever was typed there armed on the next run.
@@ -2082,7 +2345,7 @@ function restoreHistory(entry) {
   updateRunMath();
   saveForm();
   showError(null);
-  document.querySelector('.tabbtn[data-tab="generate"]').click();  // re-sizes the prompt box
+  showTab('generate');  // re-sizes the prompt box
   window.scrollTo(0, 0);
   updateRunMath();
   toast(lost ? `loaded - ${lost} reference image(s) are gone` : 'loaded into Generate');
@@ -2120,6 +2383,34 @@ function restoreUpscaleHistory(entry) {
   autoGrow($('upGuidance'));
   window.scrollTo(0, 0);
   toast(lost ? 'loaded - the image is gone, pick another' : 'loaded into Upscale');
+}
+
+/**
+ * The same gesture on a sprite row: personality, seed and save-toggle come
+ * back into the Sprite pane, and the reference image re-attaches when it is
+ * still on disk. Nothing is submitted - tapping history has always meant
+ * "fill the form in".
+ */
+function restoreSpriteHistory(entry) {
+  const s = entry.settings ?? {};
+  $('spPrompt').value = entry.prompt ?? '';
+  $('spSeed').value = s.seed === null || s.seed === undefined ? '' : String(s.seed);
+  $('spDownload').checked = s.collectImages !== false;
+
+  const slot = (entry.slots ?? []).find(Boolean);
+  let lost = false;
+  if (slot?.available && slot.url) {
+    setSpriteImage(slot.kind === 'upload' ? { uploadId: slot.uploadId } : { ref: slot.ref }, slot.url);
+  } else {
+    lost = true;
+    setSpriteImage(null);
+  }
+  saveForm();
+  showError(null);
+  showTab('sprite');
+  autoGrow($('spPrompt'));
+  window.scrollTo(0, 0);
+  toast(lost ? 'loaded - the reference image is gone, pick another' : 'loaded into Sprite');
 }
 
 $('reloadHistory').onclick = loadHistory;
@@ -2399,35 +2690,23 @@ lbImg.addEventListener('wheel', (e) => {
  * enhance toggle picks between the two generate graphs at run time, so both
  * appear here as their own entry rather than one hidden behind the toggle.
  */
-const BIND_KINDS = ['generate', 'enhanceless', 'upscale'];
+const BIND_KINDS = ['generate', 'enhanceless', 'upscale', 'sprite'];
 const bindKind = () => (BIND_KINDS.includes($('bindKind')?.value) ? $('bindKind').value : 'generate');
-const bindingsFor = (kind) =>
-  (kind === 'enhanceless'
-    ? state.cfg?.enhancelessBindings
-    : kind === 'upscale'
-      ? state.cfg?.upscaleBindings
-      : state.cfg?.bindings) ?? {};
-const bindingsPath = (kind) =>
-  kind === 'enhanceless'
-    ? '/api/enhanceless/workflow'
-    : kind === 'upscale'
-      ? '/api/upscale/workflow'
-      : '/api/workflow';
+// One entry per graph instead of a chain of ternaries: the fourth kind is what
+// broke the chain, and a table makes a missing arm obvious.
+const BIND_OF = {
+  generate: { map: 'bindings', path: '/api/workflow', stale: 'staleBindings', file: 'workflow_api.json' },
+  enhanceless: { map: 'enhancelessBindings', path: '/api/enhanceless/workflow', stale: 'staleEnhancelessBindings', file: 'workflow_api_enhanceless.json' },
+  upscale: { map: 'upscaleBindings', path: '/api/upscale/workflow', stale: 'staleUpscaleBindings', file: 'upscale_api.json' },
+  sprite: { map: 'spriteBindings', path: '/api/sprite/workflow', stale: 'staleSpriteBindings', file: 'sprite_api.json' },
+};
+const bindingsFor = (kind) => state.cfg?.[BIND_OF[kind]?.map ?? 'bindings'] ?? {};
+const bindingsPath = (kind) => BIND_OF[kind]?.path ?? '/api/workflow';
 // The stale report the save response carries for this map - one key per map on
 // the server, so the page has to ask for the matching one.
-const staleKeyFor = (kind) =>
-  kind === 'enhanceless'
-    ? 'staleEnhancelessBindings'
-    : kind === 'upscale'
-      ? 'staleUpscaleBindings'
-      : 'staleBindings';
+const staleKeyFor = (kind) => BIND_OF[kind]?.stale ?? 'staleBindings';
 // The file this kind's JSON lives in, for messages.
-const workflowFileFor = (kind) =>
-  kind === 'enhanceless'
-    ? 'workflow_api_enhanceless.json'
-    : kind === 'upscale'
-      ? 'upscale_api.json'
-      : 'workflow_api.json';
+const workflowFileFor = (kind) => BIND_OF[kind]?.file ?? 'workflow_api.json';
 
 async function loadSettings() {
   try {
@@ -2470,7 +2749,18 @@ const BIND_LABELS = {
   targetWidth: 'Target width',
   targetHeight: 'Target height',
   guidance: 'Guidance prompt',
+  // The sprite graph's own rows.
+  personalityPrompt: 'Personality prompt',
+  filenameCounter: 'Filename Counter',
 };
+
+/** A label for this key as it reads in THIS graph - `image` is the input to
+ *  upscale in one and the reference the sprite is drawn from in the other, and
+ *  one flat map cannot say both. */
+function bindLabel(key) {
+  if (bindKind() === 'sprite' && key === 'image') return 'Reference image';
+  return BIND_LABELS[key] ?? key;
+}
 
 function renderBindings(bindings) {
   const wrap = $('bindings');
@@ -2511,7 +2801,7 @@ function renderBindings(bindings) {
     if (key === 'images') {
       (value ?? []).forEach((b, i) => row(`Reference ${i + 1}`, b, key, i + 1));
     } else {
-      row(BIND_LABELS[key] ?? key, value, key, null);
+      row(bindLabel(key), value, key, null);
     }
   }
 }
@@ -3020,6 +3310,7 @@ async function uploadWorkflow(kind, inputId) {
 listen('wfUpload', 'change', () => uploadWorkflow('generate', 'wfUpload'));
 listen('enWfUpload', 'change', () => uploadWorkflow('enhanceless', 'enWfUpload'));
 listen('upWfUpload', 'change', () => uploadWorkflow('upscale', 'upWfUpload'));
+listen('spWfUpload', 'change', () => uploadWorkflow('sprite', 'spWfUpload'));
 
 // The node reference follows the graph the bindings editor is on, and is only
 // fetched when it is actually opened - the upscale graph has 40-odd nodes and
@@ -3062,6 +3353,7 @@ loadCollapsed();
 const hadSavedForm = restoreForm();
 renderSlots();
 renderUpSlot();
+renderSpSlot();
 syncUpUi();
 syncAspectUi();
 syncEnhanceHint();
@@ -3071,6 +3363,9 @@ autoGrow($('postprompt'));
 renderQueue();
 refreshHealth();
 connectEvents();
+// The next Filename Counter is the server's to answer - fetching it here means
+// the number on screen is what a submit made right now would spend.
+void refreshSpriteCounter();
 setInterval(refreshHealth, 30000);
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) return;

@@ -10,7 +10,7 @@
 <!-- iOS ignores the standard icon tag when adding to the home screen. -->
 <link rel="apple-touch-icon" href="/icon.png">
 </head>
-<body>
+<body class="two-bars">
 
 <header class="topbar">
   <div class="brand">mobile-cfy</div>
@@ -21,8 +21,17 @@
 
 <main>
 
-<!-- ───────────────────────────── GENERATE ───────────────────────────── -->
-<section id="tab-generate" class="tab active">
+<!-- ───────────────────────────── CREATE ───────────────────────────── -->
+<!-- Every way of making images is ONE page with a second bar above the main
+     one: Generate, Upscale and Sprite are panes of it, switched by that bar.
+     The queue moved to its own page in the bottom bar, so "something was
+     added" has a home - a count badge on the Queue button that pulses on
+     every addition, plus a toast. The error line sits above the panes
+     because all three forms report into it. -->
+<section id="tab-create" class="tab active">
+  <p class="err" id="genErr" hidden></p>
+
+  <div id="sub-generate" class="subpane active">
 
   <label class="field">
     <span class="lbl">Prompt</span>
@@ -110,13 +119,13 @@
   </div>
 
   <button id="generate" class="btn primary big" type="button">Generate</button>
-</section>
+  </div><!-- /sub-generate -->
 
-<!-- ────────────────────────────── UPSCALE ────────────────────────────── -->
-<!-- Its own inputs, but it borrows the queue and the job panel below: ComfyUI
-     has one GPU, so an upscale waits its turn behind whatever is generating and
-     the page has to be able to show that. -->
-<section id="tab-upscale" class="tab">
+<!-- ────────────────────────────── UPSCALE ───────────────────────────── -->
+<!-- A pane of the Create page. It borrows the queue page for its progress:
+     ComfyUI has one GPU, so an upscale waits its turn behind whatever is
+     generating, and the queue page shows that. -->
+  <div id="sub-upscale" class="subpane">
   <div class="card">
     <div class="card-hd">
       <span>Image to upscale</span>
@@ -189,12 +198,63 @@
   </div>
 
   <button id="upscale" class="btn primary big" type="button">Upscale</button>
-</section>
+  </div><!-- /sub-upscale -->
 
-<!-- ────────────── SHARED QUEUE + JOB PANEL (Generate and Upscale) ────────────── -->
-<!-- One queue for both kinds of work, so the queue strip and the progress panel
-     are shown on whichever tab asked for the work rather than being duplicated. -->
-<section class="tab active" data-for="generate upscale">
+  <div id="sub-sprite" class="subpane">
+  <!-- The Sprite graph: one personality prompt plus one reference image in,
+       eight expression views out (casual, happy, angry, embarrassed, startled,
+       sad, horny, and one more) - each a SaveImage named from the shared
+       Filename Counter. Both inputs are required: node 10 appends the graph's
+       own base prompt to the personality, and every text encoder reads the
+       LoadImage's reference, so an empty half cannot run. -->
+  <div class="card">
+    <div class="card-hd">
+      <span>Reference image</span>
+      <span class="btnrow">
+        <button id="spPickGallery" class="btn ghost sm" type="button">⤓ from gallery</button>
+        <button id="spClear" class="btn ghost sm" type="button">clear</button>
+      </span>
+    </div>
+    <div id="spSlot" class="slots"></div>
+    <input id="spFilePick" type="file" accept="image/*" hidden>
+  </div>
+
+  <label class="field">
+    <span class="lbl">Personality prompt <a href="#" id="helpSpPrompt" class="hint">?</a></span>
+    <textarea id="spPrompt" rows="4" placeholder="cheerful, curious, a bit mischievous"></textarea>
+  </label>
+
+  <div class="card">
+    <div class="card-hd"><span>Run</span></div>
+    <label class="field">
+      <span class="lbl">Seed <a href="#" id="helpSpSeed" class="hint">?</a></span>
+      <input type="text" id="spSeed" placeholder="random" inputmode="numeric"
+        autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
+    </label>
+    <!-- Shown from GET /api/sprite/counter: the number the NEXT job's eight
+         files will be named from. Updated after every submit, so the counter
+         is visible before it is spent rather than a surprise in the folder. -->
+    <p class="note" id="spCounter" hidden></p>
+    <label class="switch">
+      <input type="checkbox" id="spDownload" checked>
+      <span></span>
+      <div><b>Save images</b><i>eight views into the sprite subfolder</i></div>
+    </label>
+    <p class="note">Eight images land in <code>mobile-cfy/sprite/</code>, named
+      <code>Sprite/&lt;counter&gt;&lt;view&gt;-…</code>. The counter comes from a record on
+      the server, so two jobs never name a file the same way.</p>
+  </div>
+
+  <button id="sprite" class="btn primary big" type="button">Generate sprite</button>
+  </div><!-- /sub-sprite -->
+</section><!-- /tab-create -->
+
+<!-- ───────────────────────────── QUEUE ───────────────────────────── -->
+<!-- Its own page in the bottom bar: the one queue all three kinds share, the
+     action bar for a selected row, and the progress panel. The bottom bar's
+     Queue button carries a live count of everything in flight and pulses when
+     something joins - this page is where that badge sends you. -->
+<section id="tab-queue" class="tab">
   <p class="note" id="queueHint" hidden></p>
   <p class="note warn" id="queuePaused" hidden></p>
   <p class="note warn" id="queueSaved" hidden></p>
@@ -213,7 +273,7 @@
     <button id="selDown" class="btn ghost sm" type="button">move down</button>
     <button id="selCancel" class="btn ghost sm danger" type="button">cancel</button>
   </div>
-  <p class="err" id="genErr" hidden></p>
+  <p class="note" id="queueEmpty">Nothing in the queue. Submit from Generate, Upscale or Sprite and it shows up here.</p>
 
   <div id="jobPanel" class="card" hidden>
     <div class="card-hd">
@@ -310,12 +370,13 @@
             <option value="generate">Generate</option>
             <option value="enhanceless">Enhanceless</option>
             <option value="upscale">Upscale</option>
+            <option value="sprite">Sprite</option>
           </select>
         </label>
         <button id="checkBindings" class="btn ghost sm" type="button">check</button>
       </span>
     </div>
-    <p class="note">Every feature points at a workflow node. A wrong id fails silently, so check after editing. Generate, Enhanceless and Upscale are three different files, so each gets its own set - Enhanceless is the generate graph with the enhancer deleted out of it, and it is what runs when Prompt enhance is off.</p>
+    <p class="note">Every feature points at a workflow node. A wrong id fails silently, so check after editing. Generate, Enhanceless, Upscale and Sprite are four different files, so each gets its own set - Enhanceless is the generate graph with the enhancer deleted out of it (what runs when Prompt enhance is off), and Sprite is the expression-sheet graph behind the Sprite pane.</p>
     <div id="bindings" class="bindings"></div>
     <div class="btnrow">
       <button id="saveBindings" class="btn primary sm" type="button">Save bindings</button>
@@ -330,6 +391,7 @@
       <label class="btn ghost sm">replace workflow_api.json<input id="wfUpload" type="file" accept="application/json,.json" hidden></label>
       <label class="btn ghost sm">replace workflow_api_enhanceless.json<input id="enWfUpload" type="file" accept="application/json,.json" hidden></label>
       <label class="btn ghost sm">replace upscale_api.json<input id="upWfUpload" type="file" accept="application/json,.json" hidden></label>
+      <label class="btn ghost sm">replace sprite_api.json<input id="spWfUpload" type="file" accept="application/json,.json" hidden></label>
       <span id="wfMsg" class="note"></span>
     </div>
     <details id="nodeListWrap">
@@ -358,9 +420,22 @@
 
 </main>
 
+<!-- The Create page's OWN bar: Generate / Upscale / Sprite. Fixed above the
+     main one so both are thumb-reachable, and only shown while the Create page
+     is open - it switches the three forms, never the five pages. -->
+<nav class="subtabs" id="subTabs" aria-label="create mode">
+  <button class="subbtn active" data-sub="generate" type="button">Generate</button>
+  <button class="subbtn" data-sub="upscale" type="button">Upscale</button>
+  <button class="subbtn" data-sub="sprite" type="button">Sprite</button>
+</nav>
+
 <nav class="tabs">
-  <button class="tabbtn active" data-tab="generate" type="button">Generate</button>
-  <button class="tabbtn" data-tab="upscale" type="button">Upscale</button>
+  <button class="tabbtn active" data-tab="create" type="button">Create</button>
+  <!-- The badge is filled by renderQueue from the jobs the page knows about:
+       it counts everything still in flight (running + queued + held) and
+       pulses on every increase, which is the visible "something was added"
+       signal - tapping it is a shortcut to this Queue page. -->
+  <button class="tabbtn" data-tab="queue" type="button">Queue<span class="qbadge" id="queueBadge" hidden>0</span></button>
   <button class="tabbtn" data-tab="gallery" type="button">Gallery</button>
   <button class="tabbtn" data-tab="history" type="button">History</button>
   <button class="tabbtn" data-tab="settings" type="button">Settings</button>
