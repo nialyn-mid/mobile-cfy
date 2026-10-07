@@ -372,6 +372,26 @@ test('a hold for ComfyUI\'s own queue says so and keeps send all alive', () => {
   assert.match(row, /waiting for ComfyUI's queue/);
 });
 
+test('a hold for a refused token says what to fix and that nothing was lost', () => {
+  const strip = app.slice(app.indexOf('function renderQueue'), app.indexOf("on('queueToggle'"));
+  // The queue knows a token refusal as its own pause reason - not as a
+  // connection problem, and not as the generic "paused" that swallows the
+  // message the hold was careful to carry.
+  assert.match(strip, /q\.reason === 'auth'/);
+  assert.match(strip, /held — \$\{q\.message \|\| 'ComfyUI refused the token'\}/);
+  assert.match(strip, /job\(s\) are kept in the queue/);
+  // It says WHERE to fix it, and that resuming is safe - which is true because
+  // the client re-reads .env on the next 401 by itself.
+  assert.match(strip, /edit the token in \.env/);
+  assert.match(strip, /and press resume/);
+  // The detail line of the held job carries the same distinction.
+  const detail = app.slice(app.indexOf('const bits = [];'), app.indexOf("$('jobLine').textContent"));
+  assert.match(detail, /held - ComfyUI refused the token; fix it in \.env and resume/);
+  // And the old per-job flag is gone for good: a refusal never marks a job
+  // failed any more, so there is nothing left for it to report.
+  assert.equal(/\bauthFailed\b/.test(appSrc), false, 'the dead authFailed flag is back in app.js');
+});
+
 test('a queue that cannot be written says so, and a recovered one says what came back', () => {
   assert.match(html, /id="queueSaved"/, 'the warning needs somewhere on the page to live');
   const htmlSlice = html.slice(html.indexOf('id="queueSaved"') - 80, html.indexOf('id="queueSaved"') + 60);

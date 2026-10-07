@@ -86,6 +86,28 @@ test('every fault gets its own word and a next step', () => {
   assert.notEqual(classifyComfyHealth(new ComfyError('x', { status: 200, kind: 'parse' })).state, 'unreachable');
 });
 
+test('a refused token says which side is stale', () => {
+  // The client re-reads .env on a 401 before giving up, so the error itself
+  // can carry the answer to "did you even see my edit?". Which side is wrong
+  // is the entire question a user has after a token change.
+  assert.equal(
+    new AuthError('/prompt', 'no').message,
+    'Authentication required.',
+    'no re-read was attempted (websocket path) - just the fact',
+  );
+  assert.match(
+    new AuthError('/prompt', 'no', false).message,
+    /\.env still holds the same token/,
+    'the file was re-read and still holds the refused token - fix the file',
+  );
+  assert.match(
+    new AuthError('/prompt', 'no', true).message,
+    /re-read from \.env and ComfyUI still refuses it/,
+    'the file changed and was still refused - ComfyUI caches its own password, so restart it',
+  );
+  assert.equal(new AuthError('/ws', 'no', true).reloaded, true, 'the side that re-read travels with it');
+});
+
 // ------------------------------------------------------------------ the probe
 
 test('a working ComfyUI reports its version and device', async (t) => {

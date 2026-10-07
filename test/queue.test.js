@@ -226,6 +226,121 @@ test('requests can still be built while the queue is held, and resume finishes t
   }
 });
 
+test('a refused token holds the queue instead of emptying it', async () => {
+  // ComfyUI-Login no longer believes the hash this app holds, so every answer
+  // is 401. The old code failed one job after another with that same refusal
+  // until the waiting list was empty - the queue vanished and the only trace
+  // was History. A token problem is the queue's problem: hold everything.
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = await useTempRoot(comfy.port);
+  try {
+    comfy.state.authFail = true;
+    const a = runner.enqueue(JOB('auth first', 1));
+    const b = runner.enqueue(JOB('auth second', 1));
+    const q = await waitFor(() => (runner.queueState().paused ? runner.queueState() : null), 'the queue to hold on the refusal');
+
+    assert.equal(q.reason, 'auth', 'a refused token is its own kind of hold');
+    assert.match(q.message, /Authentication required/, 'the hold says what was refused');
+    assert.equal(q.waiting, 2, 'both jobs are kept - a refusal throws nothing away');
+
+    // Nothing vanished: the job that tried is held at the front of the queue,
+    // the one behind it was never touched, and neither was failed.
+    assert.equal(runner.get(a.id).status, 'paused');
+    assert.equal(runner.get(a.id).queuePosition, 1, 'the held job keeps its place in line');
+    assert.equal(runner.get(a.id).finishedAt, null, 'a held job is not over, so it has no end time');
+    assert.match(runner.get(a.id).error, /Authentication required/);
+    assert.equal(runner.get(a.id).summary.failed, 0, 'a token problem is not a job failure');
+    assert.equal(runner.get(b.id).status, 'queued', 'the second job never even tried, so it is untouched');
+    assert.equal([a.id, b.id].some((id) => runner.get(id).status === 'error'), false);
+    assert.equal(comfy.state.prompts.length, 0, 'nothing reached ComfyUI, so there is nothing to undo');
+
+    // The .env is fixed. The client re-reads it on the next 401, so a plain
+    // resume is all it takes to carry on with both jobs.
+    comfy.state.authFail = false;
+    const stop = autoFinish(comfy);
+    try {
+      assert.equal((await runner.resume()).paused, false, 'the resume does not re-hold');
+      await waitFor(() => runner.get(a.id).status === 'done', 'A to finish after the token was fixed');
+      await waitFor(() => runner.get(b.id).status === 'done', 'B to finish after the token was fixed');
+    } finally {
+      stop();
+    }
+    assert.deepEqual(comfy.state.prompts.map(textOf), ['auth first', 'auth second'], 'one prompt per job, in order');
+    assert.equal(runner.get(a.id).error, null, 'the hold\'s message does not outlive the hold');
+    assert.equal(runner.queueState().waiting, 0);
+    assert.equal(runner.queueState().paused, false);
+  } finally {
+    await cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
+test('a resume with a dead token keeps an already-sent job ready to try again', async () => {
+  // The user report behind this test, step by step: jobs submitted and being
+  // watched, the queue paused, ComfyUI restarted (its queue and history are
+  // gone), a new token set in .env, and then Resume - which used to answer
+  // "authentication error" while the jobs themselves disappeared.
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = await useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue(JOB('sent before the restart', 1));
+    await waitFor(() => comfy.state.prompts.length === 1, 'the prompt to reach ComfyUI');
+    const firstPrompt = comfy.state.prompts[0].id;
+
+    await runner.pause('manual');
+    comfy.state.authFail = true; // before the restart, so no poll sees an empty history first
+    comfy.forgetAll(); // ComfyUI restarted: queue and history are empty now
+
+    await runner.resume();
+    const q = await waitFor(
+      () => {
+        const s = runner.queueState();
+        return s.paused && s.reason === 'auth' ? s : null;
+      },
+      'the queue to hold on the refusal',
+    );
+    assert.match(q.message, /Authentication required/);
+
+    const snap = runner.get(a.id);
+    assert.ok(snap, 'the job is still in the queue');
+    assert.equal(snap.status, 'paused', 'held, not failed');
+    assert.equal(snap.summary.failed, 0, 'a token problem is not a job failure');
+    assert.equal(snap.finishedAt, null, 'the job never finished, so it has no end time');
+    assert.equal(snap.runs[0].promptId, firstPrompt, 'the run still knows what it was sent as');
+    assert.equal(snap.runs[0].status, 'paused', 'and is waiting to reattach, not re-sent');
+    assert.equal(comfy.state.prompts.length, 1, 'and the failing resume did not send it again');
+
+    // Token fixed (the client re-reads .env on the next 401). The second resume
+    // reconciles first: that prompt is in neither /history nor /queue - the
+    // server restarted - so the run goes back with its ORIGINAL seed, and the
+    // job runs to completion like nothing happened.
+    comfy.state.authFail = false;
+    const stop = autoFinish(comfy);
+    try {
+      await runner.resume();
+      await waitFor(() => comfy.state.prompts.length === 2, 'the run to be sent again');
+      const [before, after] = comfy.state.prompts;
+      assert.notEqual(after.id, firstPrompt, 'a fresh prompt id, not the stale one');
+      assert.equal(
+        after.payload['37'].inputs.seed,
+        before.payload['37'].inputs.seed,
+        'the same seed as the attempt it replaces',
+      );
+      await waitFor(() => runner.get(a.id).status === 'done', 'the job to finish');
+    } finally {
+      stop();
+    }
+    assert.equal(runner.get(a.id).error, null, 'the hold\'s message does not outlive the hold');
+    assert.equal(runner.queueState().paused, false);
+    assert.equal(runner.queueState().waiting, 0);
+  } finally {
+    await cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
 test('cancel after a bulk submit calls ComfyUI\'s delete for the prompt that never started', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
   const root = await useTempRoot(comfy.port);

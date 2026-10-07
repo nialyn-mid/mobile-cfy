@@ -1156,9 +1156,14 @@ function renderQueue() {
   if (paused) {
     note.textContent = q.reason === 'connection'
       ? `paused — ComfyUI is not answering (${q.message || 'no connection'}). ${q.waiting ?? 0} job(s) held here; press resume when you are back on the network.`
-      : busyHold
-        ? `held — ${q.message || 'ComfyUI is busy with work this app did not send'}. ${q.waiting ?? 0} job(s) wait here and start on their own as soon as it is free — or press send all to queue up behind it now.`
-        : `paused — ${q.waiting ?? 0} job(s) held here. Press resume to carry on.`;
+      : q.reason === 'auth'
+        // A refused token is the ONE hold where the fix is on this side of the
+        // wire, so the sentence has to say where to edit - and that resuming is
+        // safe, because the client re-reads .env on the next 401.
+        ? `held — ${q.message || 'ComfyUI refused the token'}. ${q.waiting ?? 0} job(s) are kept in the queue; edit the token in .env (or press ⟳ reload token from .env in Settings if it is already right) and press resume.`
+        : busyHold
+          ? `held — ${q.message || 'ComfyUI is busy with work this app did not send'}. ${q.waiting ?? 0} job(s) wait here and start on their own as soon as it is free — or press send all to queue up behind it now.`
+          : `paused — ${q.waiting ?? 0} job(s) held here. Press resume to carry on.`;
   }
   // The queue is written to data/queue.json on every change, so a restart resumes
   // it. If that write is failing the promise is broken, and a full card or a
@@ -1397,7 +1402,9 @@ function renderJob(job) {
   if (job.status === 'paused') {
     bits.push(state.queue?.reason === 'connection'
       ? 'held - ComfyUI is not answering; nothing is lost'
-      : 'held - press resume to carry on');
+      : state.queue?.reason === 'auth'
+        ? 'held - ComfyUI refused the token; fix it in .env and resume'
+        : 'held - press resume to carry on');
   }
   if (cur) {
     bits.push(`run ${cur.index + 1} of ${job.summary.total}`);
@@ -1408,7 +1415,6 @@ function renderJob(job) {
     if (cur.node != null) bits.push(`node ${cur.node}`);
     if (cur.seed != null) bits.push(`seed ${cur.seed}`);
   }
-  if (job.authFailed) bits.push('auth failed - reload the token in Settings');
   if (job.error) bits.push(job.error);
   $('jobLine').textContent = bits.join(' · ');
 

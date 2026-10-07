@@ -52,6 +52,11 @@ The extension caches the token at import, so if you change the password in
 ComfyUI you must restart ComfyUI, copy the new hash from its console, then press
 **Reload token** in Settings (no need to restart mobile-cfy).
 
+If you get this wrong, no job is lost: a refused token **holds the queue**
+(reason `auth`) with every job still in line, and the hold's message says whether
+`.env` still carries the refused token or ComfyUI is ignoring your update.
+Fix the token, press **resume queue**, and the jobs carry on.
+
 ---
 
 ## Using it
@@ -464,6 +469,16 @@ and **nothing is lost**:
 - resume picks up exactly the runs that are missing. A prompt ComfyUI was already
   working on is re-attached to and watched, never submitted a second time.
 
+**A refused token holds the queue the same way.** If ComfyUI answers every request
+with `401 authentication required` — the password changed, or `.env` still carries
+the old hash — the queue pauses with reason `auth` instead of failing one job after
+another down the list: **a queue item never disappears because of a token problem.**
+The held job keeps its place at the front, its rolled seeds and its open History
+row, and the amber note says exactly which side is stale (the client re-reads
+`.env` on the refusal, so the message tells you whether the file changed and was
+still refused — in which case ComfyUI is caching its password and needs a restart).
+Fix the token, press `▶ resume queue`, and the jobs carry on from where they were.
+
 Resume is always a deliberate tap. When the health check notices ComfyUI is back
 the dot turns amber and says `back online` with a `press resume` toast — it will
 not start four generations behind your back just because a ping succeeded.
@@ -489,9 +504,10 @@ judgement would re-send finished work or abandon undone work — and the toast
 says `resync did not run` with the reason instead. A sweep never half-completes
 a job it cannot fully prove.
 
-`send all to ComfyUI` is disabled while the queue is held for a lost connection
-(there is nowhere to send it to yet); the pause bar stays visible even over an
-empty queue, because the resume button is the only way back out of a pause.
+`send all to ComfyUI` is disabled while the queue is held for a lost connection or
+a refused token (there is nowhere useful to send it to yet); the pause bar stays
+visible even over an empty queue, because the resume button is the only way back
+out of a pause.
 
 Both kinds of hold survive a restart, because the queue itself is on disk — see
 *The queue is saved to disk*.
@@ -891,6 +907,15 @@ so the queue held itself instead of failing every run one by one. Nothing is los
 ComfyUI` if you would rather hand the work over first. If the server was
 restarted, the queue comes back from `data/queue.json` on its own — see *The
 queue is saved to disk*.
+
+**The queue says `held — ComfyUI refused the token`.** The token in `.env` no
+longer matches what ComfyUI wants (its password changed), and the queue is
+holding every job rather than failing them — nothing vanished. The message says
+which side is stale: if `.env` still holds the refused token, edit `AUTH_TOKEN`
+there; if it changed and ComfyUI *still* refuses it, ComfyUI is caching its
+password at startup, so restart ComfyUI first. Then press `▶ resume queue` —
+the client re-reads `.env` on its own, or use `⟳ reload token from .env` in
+Settings to do it immediately. See *The token in one line*.
 
 **A run is marked failed saying the server restarted.** ComfyUI had forgotten the
 prompt — usually because ComfyUI itself was restarted, which empties its queue
