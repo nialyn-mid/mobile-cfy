@@ -1756,8 +1756,8 @@ async function loadGallery() {
 
 // ------------------------------------------------------- collapsed groups
 // Which job cards are folded away is remembered across reloads. The old "last 4"
-// button is gone: the per-image "⟳ use as input" below each thumbnail covers the
-// same need one image at a time, and the header is better spent on folding.
+// button is gone: the header is better spent on folding, and reuse of a single
+// image lives in the lightbox that tapping it opens.
 const COLLAPSE_KEY = 'mcfy.collapsedJobs.v1';
 
 function loadCollapsed() {
@@ -1877,21 +1877,18 @@ function renderGallery() {
       img.loading = 'lazy';
       img.alt = truncate(entry.prompt ?? '', 60);
       img.onclick = () => openLightbox(entry, state.gallery);
-      const acts = document.createElement('div');
-      acts.className = 'acts';
-      const bUse = document.createElement('button');
-      bUse.textContent = '⟳ use as input';
-      bUse.onclick = () => useAsInput(entry);
-      // No history button here: the group header carries the one history door
-      // for all of these images (they share a job, so they share a history row).
-      // No save button either: every image is already written to the download
+      // Tap does ONE thing: opens the lightbox. The old cell bar's reuse button
+      // sat on the same gesture that opened the lightbox - one tap, two
+      // controls - and everything it offered (add to prompt, upscale, zoom, the
+      // file's name) is in the lightbox anyway. No history button either: the
+      // group header carries the one door (they share a job, so they share a
+      // history row). No save button: every image is already in the download
       // folder as its run finishes, so a second copy is noise. The one exception
-      // is an image whose download failed, and that is now labelled rather than
-      // silently missing - "retry downloads" at the top fetches those back.
-      acts.append(bUse);
+      // is an image whose download failed, and that is labelled below rather
+      // than silently missing - "retry downloads" at the top fetches those back.
       if (entry.localPath == null) {
-        // Outside .acts on purpose: that bar only appears on tap/hover, and the
-        // whole point of this marker is that it is visible without touching it.
+        // Top-left and always visible, not a hover affordance: the whole point
+        // of this marker is that you see it without touching the thumbnail.
         const tag = document.createElement('span');
         tag.className = 'cell-tag';
         tag.textContent = entry.retry?.gone ? 'gone' : 'not downloaded';

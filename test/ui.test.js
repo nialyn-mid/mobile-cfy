@@ -666,6 +666,27 @@ test('both ways into a history entry land on the row that belongs to that job', 
   assert.match(css, /\.hrow\.flash \{/, 'the mark itself needs a rule to be seen');
 });
 
+test('a gallery thumbnail does one thing: tap opens the lightbox', () => {
+  // m12557: the cell bar put its reuse button on the same gesture that opened
+  // the lightbox - one tap, two controls - and every action that button offered
+  // (add to prompt, upscale, zoom, the name) lives in the lightbox already. The
+  // button goes, and the bar that held it goes with it - a leftover rule would
+  // resurrect the styling the moment a button returns, the .qx lesson.
+  assert.equal(/\bbUse\b/.test(app), false, 'the cell button is back in app.js');
+  assert.equal(/use as input/.test(app), false, 'its label is back too');
+  assert.match(
+    app,
+    /img\.onclick = \(\) => openLightbox\(entry, state\.gallery\)/,
+    'the tap still opens the lightbox on the whole group',
+  );
+  assert.equal(/\.cell \.acts/.test(css), false, 'and the dead bar keeps no styling');
+
+  // The header controls stack: fold on top, history underneath. Side by side
+  // they read as one cluttered strip and squeezed the prompt on a narrow screen.
+  assert.match(css, /\.group-hd \{[^}]*flex-direction: column/s, 'column, not row');
+  assert.match(app, /hd\.append\(gHist\)/, 'the history door is appended after the header');
+});
+
 test('a history row still shows its prompt now that the delete button is off', () => {
   // The delete button was switched off by commenting out its line, and that
   // line was `top.append(p, x)` - taking the PROMPT (`p`) with it. Every row

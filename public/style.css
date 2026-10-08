@@ -393,8 +393,11 @@ label.btn { display: inline-block; }
 /* --------------------------------------------------------------- gallery */
 .groups { display: flex; flex-direction: column; gap: 16px; }
 .group { }
+/* Column, not row: the fold control on top, its history door underneath. Side
+   by side they read as one cluttered strip and squeezed the prompt text into a
+   narrow column on a 360px screen. */
 .group-hd {
-  display: flex; justify-content: space-between; align-items: baseline; gap: 8px;
+  display: flex; flex-direction: column; align-items: stretch; gap: 6px;
   font-size: 12px; color: var(--dim); margin-bottom: 8px;
 }
 .group-hd b { color: var(--fg); font-size: 13px; font-weight: 600; display: block; }
@@ -404,16 +407,17 @@ label.btn { display: inline-block; }
 .group.collapsed .group-hd { margin-bottom: 0; }
 .group.collapsed .grid { display: none; }
 .g-head {
-  display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 8px; flex: none;
   background: none; border: 0; padding: 6px 0; margin: 0;
   color: var(--dim); font: inherit; font-size: 12px; line-height: 1.4;
   text-align: left; cursor: pointer;
 }
 .g-label { flex: 1; min-width: 0; }
 .g-chev { flex: none; color: var(--fg); font-weight: 600; white-space: nowrap; }
-/* The group's one history door. It sits outside .g-head (that button folds the
-   group) because a button inside a button is not a thing, and it keeps its own
-   visible hit area so it reads as an action rather than more header text. */
+/* The group's one history door, stacked UNDER the fold control. It sits outside
+   .g-head (that button folds the group) because a button inside a button is not
+   a thing; on its own full-width row it reads as an action rather than more
+   header text, and the prompt above gets the full width back. */
 .g-hist {
   flex: none; border: 1px solid var(--line); border-radius: 8px;
   padding: 6px 8px; background: var(--panel2); color: var(--fg);
@@ -423,17 +427,9 @@ label.btn { display: inline-block; }
 .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .cell { position: relative; border-radius: 10px; overflow: hidden; background: var(--panel2); border: 1px solid var(--line); }
 .cell img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: zoom-in; }
-.cell .acts {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  display: flex; gap: 4px; padding: 4px;
-  background: linear-gradient(transparent, rgba(0, 0, 0, .8));
-  opacity: 0; transition: opacity .12s;
-}
-.cell:active .acts, .cell:hover .acts { opacity: 1; }
-.cell .acts button {
-  flex: 1; border: 0; border-radius: 7px; padding: 6px 2px;
-  background: rgba(0, 0, 0, .55); color: #fff; font-size: 11px; cursor: pointer;
-}
+/* No cell action bar any more: the gallery thumbnail has no buttons left to
+   hold - tap opens the lightbox, which carries every action itself (m12557).
+   Keeping the rule would resurrect the bar the moment a button returns. */
 /* An image whose download failed still renders (the gallery streams it from
    ComfyUI) - what is missing is the copy in the download folder, and that has to
    be visible without tapping anything. */

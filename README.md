@@ -290,15 +290,15 @@ accepted — a broken sprite binding blocks only sprite jobs, exactly as a broke
 upscale binding blocks only upscales.
 
 **Gallery** tab keeps every image this and previous sessions produced, grouped by
-job. Each group's header carries the one `🕘 history` button for everything under
-it — every image there shares a job, so they all open the same History entry (the
-prompt, settings, seeds and captured prompts for the whole run); per-thumbnail
-copies of that button were crowding out the cell's own action. Tap the rest of
-the header to fold the images away — the folded set is remembered, so
-a long gallery stays readable between reloads. `⟳ use as input` drops an image
-into the next free reference slot, `⤒ upscale this` opens the Upscale tab with it
-already in place, and an upscale job's group is marked `⤒` so it is never confused
-with a generation.
+job. A thumbnail does exactly one thing: tapping it opens the **lightbox**, where
+`⟳ add to prompt`, `⤒ upscale` and pinch-zoom do the rest — the old per-cell
+reuse bar is gone, so a tap never does two jobs at once. Each group's header
+shows the prompt and folds the images away when tapped (the folded set is
+remembered, so a long gallery stays readable between reloads), and the one
+`🕘 history` button sits on its own row underneath — every image in the group
+shares a job, so they all open the same History entry (the prompt, settings,
+seeds and captured prompts for the whole run). An upscale job's group is marked
+`⤒` so it is never confused with a generation.
 
 **History** tab is the prompt memory. Every prompt you submit is written to
 `data/history.json` before the job starts, so it is there even if the run
