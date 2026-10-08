@@ -674,8 +674,12 @@ there is no save button anywhere. Tapping a thumbnail opens the **lightbox**:
 - The file's own name is pinned to the top of the screen, so you know which
   download you are looking at.
 - `⟳ add to prompt` sends the current image to the next free reference slot.
-- `⤒ upscale this` opens the Upscale tab with the image you are looking at already
+- `⤒ upscale` opens the Upscale pane with the image you are looking at already
   in it, which is the usual way to check an upscale against its source.
+- **The Upscale pane's own preview** opens this same lightbox on just that picture —
+  a pick can be judged full size before it is sent. `‹ ›` are disabled there (it is
+  one image, not a list), and the two reuse buttons only appear when the pick came
+  from the gallery, because an uploaded file has no gallery entry to reuse.
 - **The phone's back gesture closes the lightbox** instead of leaving the page —
   one press gets you out of the image, a second press leaves the app.
 

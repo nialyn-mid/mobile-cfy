@@ -763,3 +763,27 @@ test('the shutdown dialog prices a stop correctly now that the queue is saved', 
   assert.match(unsentLine, /class="warn"/, 'a delay is amber, not a red loss');
   assert.match(shut, /offerHandover: unsent > 0 && !held/, 'the hand-over offer still keys off unsent runs');
 });
+
+test('the upscale preview opens its own image in the lightbox', () => {
+  // The pick is not a gallery entry - a file upload has no id - so it carries
+  // the url the lightbox must show, and the two "reuse it" buttons, which
+  // build gallery references from an id, stay out of the way there.
+  const slotFn = app.slice(app.indexOf('function renderUpSlot'), app.indexOf('function setUpImage'));
+  assert.match(slotFn, /img\.title = 'tap to view full size'/, 'the preview says it is tappable');
+  assert.match(slotFn, /openLightbox\(state\.upEntry \?\? null\)/, 'tapping it opens the lightbox');
+
+  assert.match(app, /state\.upEntry = entry \?\? null/, 'setUpImage keeps what the lightbox needs');
+  assert.match(
+    app,
+    /setUpImage\(\{ ref: entry\.id \}, `\/api\/gallery\/\$\{entry\.id\}\/file`, entry\)/,
+    'a gallery pick hands over its full entry, id and name intact',
+  );
+
+  const lb = app.slice(app.indexOf('function showLightbox'), app.indexOf('function stepLightbox'));
+  assert.match(lb, /lbEntry\.fileUrl \?\? `\/api\/gallery\//, 'an entry with its own url shows that url');
+  assert.match(lb, /setHidden\('lbUse', !lbEntry\?\.id\)/, 'use as input needs a gallery id, so it hides');
+  assert.match(lb, /setHidden\('lbUpscale', !lbEntry\?\.id\)/, 'so does upscale-this');
+
+  const open = app.slice(app.indexOf('function openLightbox'), app.indexOf('function showLightbox'));
+  assert.match(open, /if \(!entry\) return;/, 'a tap before any pick is a no-op, not a crash');
+});

@@ -78,6 +78,7 @@ const state = {
   // picture belongs to.
   upImage: null,                  // null | { uploadId } | { ref }
   upImageUrl: null,
+  upEntry: null,                  // what the lightbox shows when the preview is tapped
   // The picked image's own pixel size, read off the thumbnail the browser has
   // already decoded. null until it has loaded - which is why the note under the
   // image fills in a moment after the image appears rather than with it.
@@ -472,6 +473,13 @@ function renderUpSlot() {
     const url = state.upImageUrl;
     const img = document.createElement('img');
     img.alt = 'image to upscale';
+    // Tapping the preview judges the pick at full size instead of eyeing a
+    // thumbnail - the same lightbox a gallery image opens. The pick has no
+    // gallery entry behind it (a file upload has no entry at all), so the list
+    // is the picture itself: prev/next are disabled by showLightbox() because
+    // there is only one.
+    img.title = 'tap to view full size';
+    img.onclick = () => openLightbox(state.upEntry ?? null);
     // The browser has to decode this image to show it anyway, and the decoded
     // size is the answer to "how big is the thing I picked" - so no second
     // request and no server-side header parsing, for uploads and gallery picks
@@ -509,9 +517,12 @@ function renderUpSlot() {
   updateUpMath();
 }
 
-function setUpImage(value, url) {
+/** `entry` is the gallery entry behind the pick, when there is one - it is what
+ *  the lightbox gets when the preview is tapped. */
+function setUpImage(value, url, entry = null) {
   state.upImage = value ?? null;
   state.upImageUrl = value ? url : null;
+  state.upEntry = entry ?? null;
   // The old size belongs to the old picture. Leaving it up would print one
   // image's dimensions under another's thumbnail for as long as the tab stayed
   // open - and the next upscale would be aimed at the wrong size.
@@ -521,7 +532,7 @@ function setUpImage(value, url) {
 
 /** The gallery entry the upscale will load, as the value the server expects. */
 function useAsUpInput(entry) {
-  setUpImage({ ref: entry.id }, `/api/gallery/${entry.id}/file`);
+  setUpImage({ ref: entry.id }, `/api/gallery/${entry.id}/file`, entry);
   toast(`${entry.localName || entry.comfyFilename || 'image'} ready to upscale`);
 }
 
@@ -539,7 +550,8 @@ listen('upFilePick', 'change', async () => {
   try {
     const { uploads } = await api('/api/uploads', { method: 'POST', body: fd });
     if (!uploads.length) return;
-    setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+    setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`,
+      { id: null, fileUrl: `/api/uploads/${uploads[0].id}`, localName: file.name });
     toast('image ready to upscale');
   } catch (e) {
     toast(e.message);
@@ -556,7 +568,8 @@ $('upSlot').addEventListener('drop', async (e) => {
   fd.append('file', file, file.name);
   try {
     const { uploads } = await api('/api/uploads', { method: 'POST', body: fd });
-    setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+    setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`,
+      { id: null, fileUrl: `/api/uploads/${uploads[0].id}`, localName: file.name });
   } catch (err) { toast(err.message); }
 });
 
@@ -701,7 +714,8 @@ window.addEventListener('paste', (e) => {
       return;
     }
     if (isTab('upscale')) {
-      setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`);
+      setUpImage({ uploadId: uploads[0].id }, `/api/uploads/${uploads[0].id}`,
+        { id: null, fileUrl: `/api/uploads/${uploads[0].id}`, localName: 'pasted.png' });
       toast('pasted image ready to upscale');
       return;
     }
@@ -2394,7 +2408,14 @@ function restoreUpscaleHistory(entry) {
   const slot = (entry.slots ?? []).find(Boolean);
   let lost = false;
   if (slot?.available && slot.url) {
-    setUpImage(slot.kind === 'upload' ? { uploadId: slot.uploadId } : { ref: slot.ref }, slot.url);
+    // What the lightbox needs for the re-attached image: uploads only have
+    // their own url, a gallery pick keeps its real id (its lightbox buttons
+    // still work). No full entry exists here - the history row is not one.
+    setUpImage(
+      slot.kind === 'upload' ? { uploadId: slot.uploadId } : { ref: slot.ref },
+      slot.url,
+      slot.kind === 'upload' ? { id: null, fileUrl: slot.url } : { id: slot.ref },
+    );
   } else {
     lost = true;
     setUpImage(null);
@@ -2533,6 +2554,7 @@ window.addEventListener('popstate', () => {
 });
 
 function openLightbox(entry, list) {
+  if (!entry) return; // e.g. the upscale preview tapped before any pick landed
   lbList = list?.length ? list : [entry];
   lbIndex = Math.max(0, lbList.findIndex((e) => e.id === entry.id));
   showLightbox();
@@ -2541,8 +2563,15 @@ function openLightbox(entry, list) {
 function showLightbox() {
   const entry = lbList[lbIndex];
   lbEntry = entry ?? null;
-  $('lightboxImg').src = lbEntry ? `/api/gallery/${lbEntry.id}/file` : '';
+  // A file-upload pick has no gallery entry behind it, so it carries its own
+  // url; every other entry is a gallery id.
+  $('lightboxImg').src = lbEntry ? (lbEntry.fileUrl ?? `/api/gallery/${lbEntry.id}/file`) : '';
   $('lightbox').hidden = false;
+  // "use as input" and "upscale this" build a gallery reference from the id -
+  // a pick with no id would build a broken one, so those two are viewer-only
+  // there. Each open re-decides, so a real entry brings them back.
+  setHidden('lbUse', !lbEntry?.id);
+  setHidden('lbUpscale', !lbEntry?.id);
   // The local download name is what the user can actually go and find in
   // ~/storage/downloads/mobile-cfy, so it beats ComfyUI's internal filename.
   setText('lbName', lbEntry ? (lbEntry.localName ?? lbEntry.comfyFilename ?? '') : '');
