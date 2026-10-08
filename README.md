@@ -623,12 +623,12 @@ The last card in **Settings** is `⏻ shut down server`. It stops the Node proce
 that is serving this page — nothing else: ComfyUI keeps running, and your images
 and prompt history are files on disk, untouched.
 
-Because the queue lives in that process, the button asks first, and it is specific
-about what each group of work means:
+Because stopping that process interrupts the queue, the button asks first, and it
+is specific about what each group of work means:
 
 | | |
 |---|---|
-| queued but never sent to ComfyUI | **lost** unless you hand it over |
+| queued but never sent to ComfyUI | **saved** — sent again on the next start; tick the box to run it now instead |
 | already at ComfyUI, not started yet | keeps generating, but nothing will be watching it, so those images are **not downloaded here** |
 | downloading already failed | retried automatically after the next start |
 | already downloaded | safe |

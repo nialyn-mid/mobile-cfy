@@ -3067,7 +3067,7 @@ $('healthCopy').onclick = async () => {
 let stopping = false;
 let shTimer = null;
 
-/** Runs of this job that never reached ComfyUI, so a stop would lose them. */
+/** Runs of this job that never reached ComfyUI — a stop parks them for the next start. */
 const unsentCount = (j) =>
   (j.runs ?? []).filter((r) => !r.promptId && ['pending', 'queued'].includes(r.status)).length;
 
@@ -3087,7 +3087,11 @@ function shutdownReport() {
   if (held) {
     lines.push('<p>The queue is paused because ComfyUI is not answering, so there is nothing to hand over.</p>');
   } else if (unsent) {
-    lines.push(`<p class="bad">${unsent} run${unsent === 1 ? '' : 's'} never reached ComfyUI and will be lost.</p>`);
+    // Not a loss any more: the queue is written to data/queue.json and restore()
+    // re-queues these on the next boot (the sweep's finally pumps them), so the
+    // honest cost of stopping is a DELAY. Warn, not bad - "will be lost" here
+    // predated persistence and overstated what the button was about to do.
+    lines.push(`<p class="warn">${unsent} run${unsent === 1 ? '' : 's'} never reached ComfyUI — saved in the queue, sent again on the next start.</p>`);
   } else if (jobs.length) {
     lines.push('<p>Everything queued has already been handed to ComfyUI.</p>');
   }

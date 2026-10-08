@@ -741,3 +741,25 @@ test('an async error kills neither the server nor the log', () => {
   assert.match(app, /state\.fatal = h\.fatal/, 'the page keeps it');
   assert.match(app, /server recovered from \$\{state\.fatal\.kind\}/, 'and the report prints it');
 });
+
+test('the shutdown dialog prices a stop correctly now that the queue is saved', () => {
+  // The queue became persistent (m06951): restore() re-queues everything from
+  // data/queue.json and the sweep's finally pumps it, so a run that never
+  // reached ComfyUI is DELAYED by a stop, not killed by it. The dialog still
+  // promised the old cost - "will be lost" - which would talk someone out of
+  // pressing a button that loses nothing. The binding-reset confirm's own
+  // "will be lost" (settings, not runs) is a different sentence and stays.
+  const shut = app.slice(
+    app.indexOf('function shutdownReport'),
+    app.indexOf('function renderShutdownNote'),
+  );
+  assert.match(
+    shut,
+    /never reached ComfyUI — saved in the queue, sent again on the next start/,
+    'the promise replaced the loss claim',
+  );
+  assert.equal(/will be lost/.test(shut), false, 'no loss claim survives inside the report');
+  const unsentLine = shut.split('\n').find((l) => l.includes('never reached ComfyUI')) ?? '';
+  assert.match(unsentLine, /class="warn"/, 'a delay is amber, not a red loss');
+  assert.match(shut, /offerHandover: unsent > 0 && !held/, 'the hand-over offer still keys off unsent runs');
+});
