@@ -634,14 +634,18 @@ test("a waiting job's actions live in one bar under the queue, not on every row"
 });
 
 test('both ways into a history entry land on the row that belongs to that job', () => {
-  // Two entry points now: the action bar's Details and the gallery cell's
+  // Two entry points now: the action bar's Details and the gallery GROUP's
   // history button. Both hand over the JOB id and one function does the rest,
   // because entries fold by prompt - a job can sit inside a row that remembers
   // several jobIds, so matching on position or on prompt text would miss.
   assert.match(app, /showHistoryForJob\(state\.sel\)/, 'from the queue');
-  assert.match(app, /bHist\.textContent = '🕘 history'/, 'a gallery cell offers it');
-  assert.match(app, /bHist\.onclick = \(\) => showHistoryForJob\(entry\.jobId\)/);
-  assert.match(app, /acts\.append\(bUse, bHist\)/, 'and is actually appended, not just built');
+  // The gallery offers it ONCE per group, not once per thumbnail: every image
+  // in a group shares a job, so per-cell buttons repeated the same door while
+  // crowding the cell's own bar.
+  assert.match(app, /gHist\.textContent = '🕘 history'/, 'the group header offers it');
+  assert.match(app, /gHist\.onclick = \(\) => showHistoryForJob\(jobId\)/);
+  assert.match(app, /hd\.append\(gHist\)/, 'and is actually appended, not just built');
+  assert.equal(/bHist/.test(app), false, 'the per-thumbnail history button is gone');
   assert.equal(/\bbUp\b/.test(appSrc), false, 'the dead upscale twin is back in the gallery');
 
   // The target travels as a flag, never as a position: the list is re-read on
@@ -671,4 +675,69 @@ test('a history row still shows its prompt now that the delete button is off', (
   assert.equal(/top\.append\(p, x\)/.test(app), false, 'the delete-button append stays off (x is commented out)');
   assert.equal(/hrow-x/.test(app), false, 'the delete button itself stays off');
   assert.match(app, /p\.textContent = /, 'and it carries the text it was built for');
+});
+
+test('an upscale row shows its extra guidance where a generation shows its prompt', () => {
+  // An upscale has no prompt text - the row used to be named after what it did
+  // ("upscale foo.png ×2"), which left the guidance the user typed as an
+  // invisible chip while the prompt slot said something they never wrote.
+  // The guidance IS this row's prompt-equivalent, so it goes in that slot.
+  assert.match(app, /eKind === 'upscale'/, 'the row still knows it is an upscale');
+  assert.match(
+    app,
+    /eKind === 'upscale'\s*\?\s*`⤒ \$\{eGuidance \|\| entry\.prompt \|\| '\(upscale\)'\}`/,
+    'guidance first, the auto-name only as the fallback',
+  );
+  assert.match(
+    app,
+    /typeof entry\.settings\?\.guidance === 'string' \? entry\.settings\.guidance\.trim\(\) : ''/,
+    'blank/missing guidance degrades to empty rather than "undefined"',
+  );
+  // A generation must keep showing its prompt untouched.
+  assert.match(app, /: \(entry\.prompt \|\| '\(empty prompt\)'\)/, 'the generate branch is unchanged');
+});
+
+test('an async error kills neither the server nor the log', () => {
+  // The report this exists for: "the server goes down when I press resume, and
+  // server.err/server.log say nothing helpful." Three separate holes made that
+  // possible, and each one is pinned here because each one fails silently.
+  const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  const runner = fs.readFileSync(path.join(ROOT, 'lib', 'runner.js'), 'utf8');
+
+  // 1. Node's default for ANY unhandled rejection or uncaught exception is to
+  //    kill the process - and the operator's restart then truncates the very
+  //    file that held the stack. The handlers must exist and must log to BOTH
+  //    streams, because stdout and stderr land in different files.
+  assert.match(server, /process\.on\('unhandledRejection'/, 'rejections are caught, not fatal');
+  assert.match(server, /process\.on\('uncaughtException'/, 'exceptions are caught, not fatal');
+  const fatal = server.slice(server.indexOf('function reportFatal'), server.indexOf('process.on'));
+  assert.match(fatal, /console\.error\(/, 'the stack goes to stderr');
+  assert.match(fatal, /console\.log\(/, 'and the message to stdout, so no redirect hides it');
+  assert.match(fatal, /lastFatal = \{/, 'the trace is remembered, not just printed');
+
+  // 2. Both SSE streams write into sockets the phone can drop mid-flight; a
+  //    write error with no listener is itself fatal. Every res.write in a
+  //    stream must sit behind an error listener.
+  const streams = server.slice(server.indexOf("route('GET', '/api/jobs/:id/events'"));
+  assert.match(streams, /res\.on\('error', cleanup\)/, 'job stream guards its writes');
+  assert.ok(
+    (streams.match(/res\.on\('error', cleanup\)/g) ?? []).length >= 2,
+    'the queue stream guards its writes too',
+  );
+
+  // 3. The idle/back watches fire from setInterval, where nothing awaits them:
+  //    a rejection there is unhandled by definition. Both the interval body and
+  //    the immediate first check must carry a .catch.
+  for (const watch of ['this.#checkIdle()', 'this.#checkBack()']) {
+    const bare = runner.split(watch).length - 1;
+    const caught = runner.split(`${watch}.catch`).length - 1;
+    assert.equal(bare, caught, `every ${watch} must be followed by .catch`);
+  }
+
+  // The trace must reach the UI: the health poll the page already makes carries
+  // it, and the copyable report prints it - a crash you can only see in a log
+  // file on the phone is a crash nobody reports.
+  assert.match(server, /fatal: lastFatal/, 'health carries the trace');
+  assert.match(app, /state\.fatal = h\.fatal/, 'the page keeps it');
+  assert.match(app, /server recovered from \$\{state\.fatal\.kind\}/, 'and the report prints it');
 });

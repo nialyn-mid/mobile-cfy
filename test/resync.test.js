@@ -236,6 +236,14 @@ test('work that vanished from ComfyUI is sent again with its ORIGINAL seed', asy
     await waitFor(() => comfy.state.prompts.length > before, 'the retry was posted');
     const resent = comfy.state.prompts.at(-1);
     assert.equal(resent.payload['37'].inputs.seed, seed, 'the retry reused the seed');
+    // The fake records the POST the moment it ARRIVES, but the runner only
+    // stamps run.promptId after its own await resolves — a gap of a tick or
+    // two that a busy suite widens enough to read `null` here. Wait for the
+    // stamp rather than racing it; the equality still says WHICH id it owns.
+    await waitFor(
+      () => runner.get(job.id).runs[0].promptId === resent.id,
+      'and owns its new id',
+    );
     assert.equal(runner.get(job.id).runs[0].promptId, resent.id, 'and owns its new id');
 
     // Let it finish. Leaving a job RUNNING here would leave it running when the

@@ -171,6 +171,10 @@ async function refreshHealth() {
     const h = await api('/api/health');
     const c = h.comfy;
     state.health = c;
+    // The server's last fatal async error, if any: the health poll is the one
+    // request the page always makes, so this is how an error that would have
+    // killed an unguarded process becomes visible without opening a log file.
+    state.fatal = h.fatal ?? null;
     if (h.queue) applyQueue(h.queue);
     if (c.state === 'ok') {
       // ComfyUI answers again while a queue is still held for the network. Say
@@ -232,6 +236,13 @@ function healthReportText() {
   if (c.problem) bits.push(c.problem);
   if (c.error) bits.push(c.error);
   if (c.hint) bits.push(c.hint);
+  if (state.fatal) {
+    // Kept separate from the comfy states: this is the SERVER reporting a fault
+    // it survived, not a verdict about ComfyUI. Its stack goes in the copy so a
+    // bug report carries the actual trace, not just "something went wrong".
+    bits.push(`server recovered from ${state.fatal.kind} at ${new Date(state.fatal.at).toLocaleTimeString()}: ${state.fatal.message}`);
+    if (state.fatal.stack) bits.push(state.fatal.stack);
+  }
   bits.push(`checked ${new Date(c.checkedAt ?? Date.now()).toLocaleTimeString()}`);
   return bits.join('\n');
 }
@@ -1826,6 +1837,18 @@ function renderGallery() {
     head.append(chev);
     head.onclick = () => toggleGroup(jobId);
     hd.append(head);
+    // ONE history door per group, on the group itself: every image under this
+    // header came from the same job, so they all open the same history row -
+    // repeating the button on every thumbnail crowded the cell's own bar and
+    // offered the same door three or six times. The row it opens holds the
+    // prompt, settings, seeds and captured prompts for the whole group.
+    const gHist = document.createElement('button');
+    gHist.type = 'button';
+    gHist.className = 'g-hist';
+    gHist.textContent = '🕘 history';
+    gHist.title = 'the prompt, settings and seeds behind these images';
+    gHist.onclick = () => showHistoryForJob(jobId);
+    hd.append(gHist);
     g.append(hd);
 
     const grid = document.createElement('div');
@@ -1845,20 +1868,13 @@ function renderGallery() {
       const bUse = document.createElement('button');
       bUse.textContent = '⟳ use as input';
       bUse.onclick = () => useAsInput(entry);
-      // The gallery keeps the images, History keeps where they came from: the
-      // prompt, the settings, the seeds and the captured text. This is the door
-      // between them, and it lands on THIS job's row rather than the top of the
-      // list. (A per-cell "upscale" button used to be built here too but never
-      // appended - the lightbox's⤒ upscale is that action, so it is not
-      // resurrected here.)
-      const bHist = document.createElement('button');
-      bHist.textContent = '🕘 history';
-      bHist.onclick = () => showHistoryForJob(entry.jobId);
-      // No save button: every image is already written to the download folder
-      // as its run finishes, so a second copy is noise. The one exception is an
-      // image whose download failed, and that is now labelled rather than
+      // No history button here: the group header carries the one history door
+      // for all of these images (they share a job, so they share a history row).
+      // No save button either: every image is already written to the download
+      // folder as its run finishes, so a second copy is noise. The one exception
+      // is an image whose download failed, and that is now labelled rather than
       // silently missing - "retry downloads" at the top fetches those back.
-      acts.append(bUse, bHist);
+      acts.append(bUse);
       if (entry.localPath == null) {
         // Outside .acts on purpose: that bar only appears on tap/hover, and the
         // whole point of this marker is that it is visible without touching it.
@@ -1943,7 +1959,15 @@ function renderHistory() {
     top.className = 'hrow-top';
     const p = document.createElement('div');
     p.className = 'hrow-prompt';
-    p.textContent = (entry.kind ?? entry.settings?.kind) === 'upscale' ? `⤒ ${entry.prompt || '(upscale)'}` : (entry.prompt || '(empty prompt)');
+    // An upscale has no prompt of its own - the row is named after what it did
+    // to which picture. But when the user typed extra guidance, that text IS
+    // this row's prompt-equivalent: show it in the slot where a generation
+    // shows its prompt, and keep the auto-name only as the fallback.
+    const eKind = entry.kind ?? entry.settings?.kind;
+    const eGuidance = typeof entry.settings?.guidance === 'string' ? entry.settings.guidance.trim() : '';
+    p.textContent = eKind === 'upscale'
+      ? `⤒ ${eGuidance || entry.prompt || '(upscale)'}`
+      : (entry.prompt || '(empty prompt)');
     // const x = document.createElement('button');
     // x.className = 'hrow-x';
     // x.type = 'button';

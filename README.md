@@ -290,12 +290,14 @@ accepted — a broken sprite binding blocks only sprite jobs, exactly as a broke
 upscale binding blocks only upscales.
 
 **Gallery** tab keeps every image this and previous sessions produced, grouped by
-job. Tap a job header to fold its images away — the folded set is remembered, so
+job. Each group's header carries the one `🕘 history` button for everything under
+it — every image there shares a job, so they all open the same History entry (the
+prompt, settings, seeds and captured prompts for the whole run); per-thumbnail
+copies of that button were crowding out the cell's own action. Tap the rest of
+the header to fold the images away — the folded set is remembered, so
 a long gallery stays readable between reloads. `⟳ use as input` drops an image
 into the next free reference slot, `⤒ upscale this` opens the Upscale tab with it
-already in place, `🕘 history` jumps to the History entry for the outputs you are
-looking at (useful when the gallery cell has scrolled far from where that job's
-prompt is filed), and an upscale job's group is marked `⤒` so it is never confused
+already in place, and an upscale job's group is marked `⤒` so it is never confused
 with a generation.
 
 **History** tab is the prompt memory. Every prompt you submit is written to
@@ -325,8 +327,11 @@ Two details worth knowing:
   `4 images in one pass`, `extra guidance`), and are the one thing in History that
   reopens the **Upscale** pane instead of Generate — multiplier, target size, batch,
   guidance, seed and download toggle all come back, along with the image itself
-  when the gallery still has it.
-- **Jumps land on the right row.** The Queue page's `details` and a gallery cell's
+  when the gallery still has it. Where a generation shows its prompt text, an
+  upscale shows its **extra guidance** instead (`⤒ <guidance>`) — that box is this
+  row's prompt-equivalent, so it sits in the prompt slot rather than only as a
+  chip; an upscale with no guidance falls back to the auto-name, then `(upscale)`.
+- **Jumps land on the right row.** The Queue page's `details` and a gallery group's
   `🕘 history` hand History the *job's* id, and the entry is matched by that id —
   including inside a folded row that remembers several jobs — then brought into
   view and flashed briefly. A job that has no entry yet says so in a toast instead
@@ -505,7 +510,13 @@ four of the five are not outages:
 hint, problem, checkedAt}` — so `curl -s http://127.0.0.1:3081/api/health` in
 Termux shows the same lines the card does, without touching the browser. It also
 carries `shutdown: {allowed, because, error}`: whether *this* caller may stop the
-server, and why not if it may not.
+server, and why not if it may not. And it carries `fatal`: `null` normally, or the
+last async error the server caught and **survived** — the process no longer dies
+on an unhandled rejection or an uncaught exception (it logs `[fatal] …` to both
+stdout and stderr with the full stack and keeps serving, because Node's default
+kill plus your restart used to truncate exactly the log you needed), so the health
+answer is where that trace is still readable. The page's health report prints it
+with its timestamp, and the copy button takes the stack along.
 
 ### Walking off the network
 

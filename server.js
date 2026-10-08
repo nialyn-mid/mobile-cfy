@@ -188,6 +188,9 @@ route('GET', '/api/health', async (req, res) => {
     // Carried here because this is the poll the page already makes: it is how
     // the UI learns that a queue paused for the network is worth resuming again.
     queue: runner.queueState(),
+    // The trace of the last async error that would have killed an unguarded
+    // process (see reportFatal). null until something actually fires.
+    fatal: lastFatal,
   });
 });
 
@@ -524,6 +527,10 @@ route('GET', '/api/jobs/:id/events', async (req, res, url, { id }) => {
     clearInterval(ping);
     runner.off('update', onUpdate);
   };
+  // A write into a socket the phone dropped mid-stream surfaces as an 'error'
+  // event on the response. With no listener Node treats it as fatal - which is
+  // how a network blip could take the whole server down behind a resume press.
+  res.on('error', cleanup);
   runner.on('update', onUpdate);
   req.on('close', cleanup);
   if (['done', 'error', 'cancelled'].includes(job.status)) {
@@ -557,6 +564,9 @@ route('GET', '/api/events', async (req, res) => {
     runner.off('update', onUpdate);
     runner.off('queue', onQueue);
   };
+  // Same guard as the job stream: a dead socket must cost one listener, not
+  // the process.
+  res.on('error', cleanup);
   runner.on('update', onUpdate);
   runner.on('queue', onQueue);
   req.on('close', cleanup);
@@ -769,6 +779,41 @@ let stopping = false;
 // before the reply is on the wire, so a guard that reads it would decide the
 // exit had already happened and never leave.
 let exiting = false;
+
+/**
+ * The last async error that reached a process-level handler.
+ *
+ * Kept for /api/health: when something fatal enough to need these handlers
+ * fires, the console line is the only trace it leaves, and on a phone that
+ * trace scrolls away. The health report carries the message and stack so
+ * "the server went down" is answerable from the UI, not just from a log file
+ * that a restart may have truncated.
+ */
+let lastFatal = null;
+
+function reportFatal(kind, e) {
+  const stack = e instanceof Error ? (e.stack || String(e)) : String(e);
+  lastFatal = { kind, at: new Date().toISOString(), message: e?.message ?? String(e), stack };
+  // Both streams on purpose: stdout and stderr go to different files depending
+  // on how the server was started (server.log vs server.err, or a Termux
+  // terminal with no redirect at all), and a crash report in the wrong one is
+  // a crash report nobody finds.
+  console.error(`[fatal] ${kind}:`, stack);
+  console.log(`[fatal] ${kind}: ${e?.message ?? e}`);
+}
+
+/**
+ * Node kills the process on any async error nobody awaited: a floating
+ * promise, a stream callback, a timer that threw. That is exactly the class of
+ * bug that made "press resume, server gone, logs empty" undiagnosable - the
+ * stack went to stderr, the operator restarted (truncating it), and the queue
+ * vanished with the process. For a long-running single-user server the state
+ * is worth more than Node's default purity: every job path already has its own
+ * try/catch, the queue is on disk, so these handlers log loudly and let the
+ * server keep serving instead of dying silently.
+ */
+process.on('unhandledRejection', (e) => reportFatal('unhandledRejection', e));
+process.on('uncaughtException', (e) => reportFatal('uncaughtException', e));
 
 /**
  * Leave. Nothing is drained first: the SSE stream and the keep-alive sockets to
