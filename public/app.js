@@ -1897,7 +1897,7 @@ function renderGallery() {
           : 'still waiting for a retry - the file is not in the download folder yet';
         cell.append(tag);
       }
-      cell.append(img, acts);
+      cell.append(img);
       grid.append(cell);
     }
     g.append(grid);

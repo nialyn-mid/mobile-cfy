@@ -680,6 +680,11 @@ test('a gallery thumbnail does one thing: tap opens the lightbox', () => {
     'the tap still opens the lightbox on the whole group',
   );
   assert.equal(/\.cell \.acts/.test(css), false, 'and the dead bar keeps no styling');
+  // The ReferenceError guard: removing the bar left `cell.append(img, acts)`
+  // below the deleted declaration, which blanked the whole gallery at runtime
+  // while every source-level pin above still passed. No reference may survive
+  // the variable it was bound to.
+  assert.equal(/\bacts\b/.test(app), false, 'a dangling reference to the removed bar remains');
 
   // The header controls stack: fold on top, history underneath. Side by side
   // they read as one cluttered strip and squeezed the prompt on a narrow screen.
