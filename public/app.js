@@ -189,15 +189,14 @@ let resumeOffered = false;
  * server was fine. A poll already in flight is fetching the same bytes, so
  * skip instead of stacking.
  */
-let healthBusy = false;
+let healthInflight = null;
 async function refreshHealth() {
-  if (healthBusy) return;
-  healthBusy = true;
-  try {
-    await paintHealth();
-  } finally {
-    healthBusy = false;
-  }
+  // One poll in flight, SHARED rather than skipped: a caller that arrives
+  // mid-poll awaits the same one (the check button's "checking…" must always
+  // resolve to something), while a skip would leave that text painted for ever.
+  if (healthInflight) return healthInflight;
+  healthInflight = paintHealth().finally(() => { healthInflight = null; });
+  return healthInflight;
 }
 
 async function paintHealth() {
@@ -207,6 +206,7 @@ async function paintHealth() {
     const h = await api('/api/health');
     const c = h.comfy;
     state.health = c;
+    state.healthError = null;
     // The server's last fatal async error, if any: the health poll is the one
     // request the page always makes, so this is how an error that would have
     // killed an unguarded process becomes visible without opening a log file.
@@ -253,6 +253,10 @@ async function paintHealth() {
   } catch (e) {
     dot.className = 'dot bad';
     text.textContent = stopping ? 'server stopped' : 'server offline';
+    // The verdict goes where the copy button reads it: a report that says only
+    // "not checked yet" hides the one fact that matters - WHY nothing landed.
+    state.healthError = e?.message || String(e);
+    renderHealthDetail();
   }
 }
 
@@ -266,7 +270,13 @@ async function paintHealth() {
  */
 function healthReportText() {
   const c = state.health;
-  if (!c) return 'not checked yet';
+  // "not checked yet" alone hides the reason when polls have been FAILING: the
+  // copy button must carry the failure so the paste answers what went wrong.
+  if (!c) {
+    return state.healthError
+      ? `server not answering yet\nlast poll failed: ${state.healthError}`
+      : 'not checked yet';
+  }
   const bits = [`${c.host ?? '?'}:${c.port ?? '?'} — ${c.state}`];
   if (c.state === 'ok') {
     const i = c.info ?? {};
@@ -275,6 +285,18 @@ function healthReportText() {
   if (c.problem) bits.push(c.problem);
   if (c.error) bits.push(c.error);
   if (c.hint) bits.push(c.hint);
+  // A poll that fails after one succeeded keeps BOTH facts: the last known
+  // state, and the failure that replaced it.
+  if (state.healthError) bits.push(`last poll failed: ${state.healthError}`);
+  // The hold is part of the diagnosis: "server offline" reads very differently
+  // when the queue line says it is paused on purpose, and for what.
+  const q = state.queue;
+  if (q) {
+    bits.push(
+      `queue ${q.paused ? `paused (${q.reason}${q.message ? `: ${q.message}` : ''})` : 'running'}` +
+      ` - ${q.waiting} waiting, ${q.submitted ?? 0} handed over`,
+    );
+  }
   if (state.fatal) {
     // Kept separate from the comfy states: this is the SERVER reporting a fault
     // it survived, not a verdict about ComfyUI. Its stack goes in the copy so a

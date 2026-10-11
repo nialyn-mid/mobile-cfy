@@ -839,6 +839,12 @@ function shutDown(reason = 'signal') {
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const hit = matchRoute(req.method, url.pathname);
+  // Nothing in the log ever said WHY the page felt frozen. A route that takes
+  // seconds gets named here with its time, so "the app is lagging" becomes
+  // "GET /api/health took 14.2s" and the log finally has something to paste.
+  // The event streams reply for ever and never return, so they never hit this
+  // line; the client times those out at its own 20s deadline instead.
+  const slowAt = Date.now();
   try {
     if (hit) return await hit.handler(req, res, url, hit.params);
     if (req.method === 'GET' || req.method === 'HEAD') return serveStatic(req, res, url.pathname);
@@ -853,6 +859,9 @@ const server = http.createServer(async (req, res) => {
         ...(e.bindings ? { bindings: e.bindings } : {}),
       });
     }
+  } finally {
+    const ms = Date.now() - slowAt;
+    if (ms >= 2000) console.log(`[slow] ${req.method} ${url.pathname} ${(ms / 1000).toFixed(1)}s`);
   }
 });
 

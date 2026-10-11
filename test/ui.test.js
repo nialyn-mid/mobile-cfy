@@ -828,11 +828,28 @@ test('the page waits for answers, it does not wait for ever', () => {
     'a timeout reads as a message instead of a button that never comes back',
   );
   assert.match(app, /timeoutMs: 60000/, 'resume and shutdown wait longer than a quick route');
-  assert.match(app, /healthBusy/, 'health polls do not stack on each other');
+  assert.match(app, /healthInflight/, 'health polls share one in-flight promise instead of stacking');
 
   // The header painted a bare "ComfyUI" forever: the server builds
   // info.comfyui (from ComfyUI's system.comfyui_version), and the header
   // looked for comfyui_version itself.
   assert.match(app, /info\?\.comfyui \?\? ''/, 'the header reads the key the server actually sends');
   assert.equal(/comfyui_version/.test(app), false, 'and never the ghost key');
+});
+
+test('the lag finally says where it is, in the log and in the report', () => {
+  // The freeze report ended with "it is not outputting whats the issue": the
+  // server had no line naming a slow route, and the copy button said only
+  // "not checked yet" while every poll was timing out.
+  const server = fs.readFileSync(path.join(ROOT, 'server.js'), 'utf8');
+  assert.match(server, /\[slow\] \$\{req\.method\} \$\{url\.pathname\}/, 'every slow request is named with its method, path and seconds');
+  const runner = fs.readFileSync(path.join(ROOT, 'lib', 'runner.js'), 'utf8');
+  assert.match(runner, /\[slow\] reconcile sweep/, 'the whole-queue reconciliation sweep times itself');
+  assert.match(runner, /#backNextAt/, 'and a failing sweep backs off instead of re-running every 4s');
+
+  assert.match(app, /state\.healthError = e\?\.message/, 'the failed poll records why it failed');
+  assert.match(app, /last poll failed/, 'and the report carries that reason');
+  assert.match(app, /return state\.healthError/, 'a never-checked report falls back to the failure, not silence');
+  assert.match(app, /healthInflight/, 'health polls are shared with their caller, never skipped');
+  assert.match(app, /queue \$\{q\.paused/, 'the report names a paused queue and its reason');
 });
