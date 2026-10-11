@@ -140,7 +140,7 @@ function install(shutdown) {
     fetches.push(u);
     const body = u.startsWith('/api/health')
       ? {
-          comfy: { state: 'ok', host: '127.0.0.1', port: 3081, info: { comfyui_version: 'test' }, checkedAt: Date.now() },
+          comfy: { state: 'ok', host: '127.0.0.1', port: 3081, info: { comfyui: 'test' }, checkedAt: Date.now() },
           queue: { paused: false, reason: null, waiting: 0, running: 0, submitted: 0 },
           shutdown,
         }

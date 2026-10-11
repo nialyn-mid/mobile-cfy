@@ -813,3 +813,26 @@ test('the upscale preview opens its own image in the lightbox', () => {
   const open = app.slice(app.indexOf('function openLightbox'), app.indexOf('function showLightbox'));
   assert.match(open, /if \(!entry\) return;/, 'a tap before any pick is a no-op, not a crash');
 });
+
+test('the page waits for answers, it does not wait for ever', () => {
+  // The freeze report: while the queue was paused, submits and the health line
+  // both sat dead on "checking…" although ComfyUI was up. Server side was
+  // clean (submit-while-paused is a local enqueue; the health probe is capped
+  // at 8s). The client side had NO timeout anywhere: one stalled response held
+  // one of the browser's six per-origin connections, and the upscale button's
+  // own finally only re-enables when the fetch settles.
+  assert.match(app, /AbortSignal\.timeout\(timeoutMs\)/, 'every api() call carries a deadline');
+  assert.match(
+    app,
+    /did not answer within/,
+    'a timeout reads as a message instead of a button that never comes back',
+  );
+  assert.match(app, /timeoutMs: 60000/, 'resume and shutdown wait longer than a quick route');
+  assert.match(app, /healthBusy/, 'health polls do not stack on each other');
+
+  // The header painted a bare "ComfyUI" forever: the server builds
+  // info.comfyui (from ComfyUI's system.comfyui_version), and the header
+  // looked for comfyui_version itself.
+  assert.match(app, /info\?\.comfyui \?\? ''/, 'the header reads the key the server actually sends');
+  assert.equal(/comfyui_version/.test(app), false, 'and never the ghost key');
+});

@@ -37,10 +37,26 @@ const setDisabled = (id, v) => { const el = $(id); if (el) el.disabled = v; };
 const setHidden = (id, v) => { const el = $(id); if (el) el.hidden = v; };
 const setText = (id, v) => { const el = $(id); if (el) el.textContent = v ?? ''; };
 const api = async (path, opts = {}) => {
-  const res = await fetch(path, {
-    headers: opts.body && !(opts.body instanceof FormData) ? { 'Content-Type': 'application/json' } : undefined,
-    ...opts,
-  });
+  // Bounded, always. A stalled response used to hold one of the browser's six
+  // per-origin connections for ever: the health line sat on "checking…", the
+  // submit buttons sat greyed behind it, and the page went deaf to its own
+  // perfectly-alive server. 20s covers every quick route (the slowest normal
+  // one is health, whose ComfyUI probe is capped at 8s server-side); the few
+  // patient callers - resume's sweep, shutdown's hand-over - pass { timeoutMs }.
+  const { timeoutMs = 20000, ...rest } = opts;
+  let res;
+  try {
+    res = await fetch(path, {
+      headers: rest.body && !(rest.body instanceof FormData) ? { 'Content-Type': 'application/json' } : undefined,
+      ...rest,
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+  } catch (e) {
+    if (e?.name === 'TimeoutError') {
+      throw new Error(`${path} did not answer within ${Math.round(timeoutMs / 1000)}s - the server may be busy or stopped`);
+    }
+    throw e;
+  }
   const text = await res.text();
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { body = { error: text }; }
@@ -165,7 +181,26 @@ async function copyText(text) {
 
 let resumeOffered = false;
 
+/**
+ * One poll in flight at a time. The 30s interval, the wake-up handler and
+ * queue events can all fire while an earlier poll is still waiting, and every
+ * waiting poll holds one of the browser's six per-origin connections - the
+ * pile-up that made submits and this whole line freeze together while the
+ * server was fine. A poll already in flight is fetching the same bytes, so
+ * skip instead of stacking.
+ */
+let healthBusy = false;
 async function refreshHealth() {
+  if (healthBusy) return;
+  healthBusy = true;
+  try {
+    await paintHealth();
+  } finally {
+    healthBusy = false;
+  }
+}
+
+async function paintHealth() {
   const dot = $('healthDot');
   const text = $('healthText');
   try {
@@ -191,7 +226,10 @@ async function refreshHealth() {
         }
       } else {
         dot.className = 'dot ok';
-        text.textContent = `ComfyUI ${h.comfy.info?.comfyui_version ?? ''}`.trim();
+        // info.comfyui is the key the server builds (lib/comfy.js maps
+        // ComfyUI's system.comfyui_version into it); the header used to look
+        // for comfyui_version itself and painted a bare "ComfyUI" forever.
+        text.textContent = `ComfyUI ${h.comfy.info?.comfyui ?? ''}`.trim();
       }
     } else if (c.state === 'unauthorized') {
       dot.className = 'dot bad';
@@ -1472,7 +1510,10 @@ on('queueToggle', async () => {
   const resuming = state.queue?.paused === true;
   setDisabled('queueToggle', true);
   try {
-    state.queue = await api(resuming ? '/api/queue/resume' : '/api/queue/pause', { method: 'POST' });
+    // Resume runs the reconciliation sweep first - several ComfyUI calls, each
+    // capped at 8s - so it gets more rope than a quick route.
+    const opts = resuming ? { method: 'POST', timeoutMs: 60000 } : { method: 'POST' };
+    state.queue = await api(resuming ? '/api/queue/resume' : '/api/queue/pause', opts);
     renderQueue();
     toast(resuming ? 'queue resumed' : 'queue paused');
   } catch (e) {
@@ -3302,6 +3343,8 @@ on('shGo', async () => {
     const r = await api('/api/shutdown', {
       method: 'POST',
       body: JSON.stringify({ handover: $('shHandover')?.checked === true }),
+      // Hand-over submits every held run to ComfyUI before answering.
+      timeoutMs: 60000,
     });
     if (r.handover?.failures?.length) note = `${r.handover.failures.length} prompt(s) could not be handed over`;
   } catch (e) {
