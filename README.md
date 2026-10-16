@@ -530,6 +530,13 @@ close, and the images still land in the download folder. Pressing it twice costs
 nothing; a run that is already at ComfyUI is never sent again, so no seed is
 burnt twice and no duplicate image appears.
 
+If ComfyUI **refuses a prompt outright** — a validation error, a queue it will not
+grow, a node it cannot load (an HTTP `400`, not a lost connection) — only that one
+job is marked failed. It stays in the queue with the exact reason on its card and
+the runs still owed to you, and the jobs queued behind it still go out. Pressing
+`send all to ComfyUI` again retries just the refused ones (a connection problem or
+a refused token is different: those hold the whole queue, below).
+
 **`pause queue` / `▶ resume queue`** holds the queue by hand, and it also engages
 itself. If ComfyUI stops answering — you left range, the PC slept — the queue
 pauses itself the moment the connection fails, says so in amber under the strip,

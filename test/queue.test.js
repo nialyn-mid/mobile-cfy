@@ -137,6 +137,72 @@ test('submit all hands the running job\'s tail AND the waiting jobs to ComfyUI',
   }
 });
 
+// The bug this pins: the old catch marked EVERY remaining run of the failing
+// job error, and error is FINISHED - the job closed and dropped straight out of
+// data/queue.json. One "no" from ComfyUI after six jobs ate the other fourteen,
+// and the queue file had to be restored by hand. Twice.
+test('a refused prompt is one job\'s problem, not the queue\'s', async () => {
+  const comfy = await startFakeComfyUI({ mode: 'manual' });
+  const root = await useTempRoot(comfy.port);
+  try {
+    const a = runner.enqueue(JOB('reject alpha'));
+    const b = runner.enqueue(JOB('reject beta'));
+    const c = runner.enqueue(JOB('reject gamma'));
+    await waitFor(() => comfy.state.prompts.length === 1, 'the first prompt to go out');
+
+    // ComfyUI refuses exactly the next prompt - a validation error, not a lost
+    // connection (that holds the whole queue; this must not). One refusal, so
+    // the job BEHIND it proves the loop kept going.
+    comfy.state.promptFail = 1;
+
+    const report = await runner.submitAll();
+    assert.equal(report.failures.length, 1, 'one refusal, reported once');
+    assert.equal(report.failures[0].jobId, b.id);
+    assert.match(report.failures[0].message, /400/);
+
+    // The refused job is still a job: same run, still pending, no prompt id,
+    // wearing the reason where the queue shows it. Closing it here is exactly
+    // what used to destroy the rest of the queue.
+    const refused = runner.get(b.id);
+    assert.equal(refused.status, 'queued');
+    assert.equal(refused.runs[0].status, 'pending');
+    assert.equal(refused.runs[0].promptId, null);
+    assert.match(refused.error, /400/, 'the card says why it did not go out');
+    const seed = refused.runs[0].seed;
+    assert.equal(Number.isInteger(seed), true, 'the rolled seed survives the refusal');
+
+    // The job queued behind the refusal still went out: the loop moved on.
+    assert.equal(runner.get(c.id).runs[0].promptId !== null, true, 'gamma was sent anyway');
+    assert.equal(comfy.state.prompts.length, 2, 'alpha and gamma, not beta');
+
+    // Nothing dropped out of the queue, on disk included - still three jobs,
+    // the refused one still pending, ready for the next press.
+    runner.flushNow();
+    const saved = JSON.parse(fs.readFileSync(path.join(root, 'data', 'queue.json'), 'utf8'));
+    assert.equal(saved.jobs.length, 3);
+    assert.equal(saved.jobs.find((j) => j.id === b.id).runs[0].status, 'pending');
+
+    // The cause clears; sending again sends exactly what never went out, with
+    // the SAME seed (the image it was still owed) and the stale message gone.
+    comfy.state.promptFail = 0;
+    const again = await runner.submitAll();
+    assert.deepEqual(again.failures, []);
+    assert.equal(again.runs, 1, 'only the refused run was still pending');
+    assert.equal(again.alreadySubmitted, 2, 'alpha\'s and gamma\'s runs are on their way');
+    const retried = runner.get(b.id);
+    assert.equal(retried.runs[0].promptId !== null, true);
+    assert.equal(retried.runs[0].seed, seed, 'the same seed it was owed before the refusal');
+    assert.equal(retried.error, null, 'the stale refusal message is cleared with the success');
+
+    comfy.completeAll();
+    await waitFor(() => runner.list().every((j) => j.status === 'done'), 'all three jobs');
+  } finally {
+    await cleanup();
+    await comfy.close();
+    dropRoot(root);
+  }
+});
+
 test('send everything never re-sends a run that is already on its way', async () => {
   const comfy = await startFakeComfyUI({ mode: 'manual' });
   const root = await useTempRoot(comfy.port);

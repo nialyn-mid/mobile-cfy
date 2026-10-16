@@ -82,6 +82,14 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
     statsStatus: 200,
     statsDelayMs: 0,
     authFail: false,
+    // How many /prompt calls to REFUSE with a 400 before accepting again - a
+    // validation error, a queue ComfyUI will not grow, a node it cannot load:
+    // a hard "no" that concerns only the prompt being sent, not the connection
+    // (which would hold the whole queue instead). A count, so a test can refuse
+    // exactly the middle job of a batch and prove the jobs behind it still go
+    // out - that is the difference between one rejected prompt being one job's
+    // problem and it burning the rest of the queue.
+    promptFail: 0,
   };
 
   const entryFor = (n, prompt, graph = null) => ({
@@ -122,6 +130,13 @@ export function startFakeComfyUI({ mode = 'instant', holdStart = false, saveNode
     if (state.authFail) return send(401, { error: 'no' });
 
     if (req.method === 'POST' && url.pathname === '/prompt') {
+      if (state.promptFail > 0) {
+        // Answered and refused without recording anything, like a real
+        // validation failure: no prompt id will ever exist for this attempt.
+        state.promptFail -= 1;
+        send(400, { error: { message: 'prompt rejected (promptFail knob)' } });
+        return;
+      }
       readJson(req).then((body) => {
         const n = ++state.next;
         const promptId = `${tag}${n}`;
