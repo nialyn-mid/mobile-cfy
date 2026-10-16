@@ -468,7 +468,7 @@ function writeInterruptedJob(file, promptId) {
       jobs: [queuedb.toRecord({
         id: 'interrupted',
         createdAt: new Date().toISOString(),
-        spec: { prompt: 'vanished prompt', kind: 'generate', slots: [], seed: 5 },
+        spec: { prompt: 'vanished prompt', kind: 'generate', slots: [], seed: 5, consistencyLora: false },
         runs: [{
           index: 0, group: 0, indexInGroup: 0, isFirstOfGroup: true, refreshOverride: true,
           seed: 5, status: 'running', promptId, startedAt: new Date().toISOString(),
@@ -481,7 +481,7 @@ function writeInterruptedJob(file, promptId) {
   queuedb.resetWriteCache();
 }
 
-test('a prompt ComfyUI has forgotten fails honestly instead of hanging', async (t) => {
+test('a prompt ComfyUI has forgotten is re-queued with its original seed, not dropped', async (t) => {
   const comfy = await startFakeComfyUI();
   const box = useRunner(comfy.port);
   t.after(async () => {
@@ -493,12 +493,16 @@ test('a prompt ComfyUI has forgotten fails honestly instead of hanging', async (
   const runner = box.reboot();
   runner.restore();
 
+  // ComfyUI restarted and has no record of the prompt. That is work that was
+  // never completed, so the run goes back in line with its ORIGINAL seed and is
+  // sent again — it is never failed, and the job is never dropped out of
+  // queue.json (which is what one ComfyUI crash used to silently do).
   await waitFor(() => ['done', 'error'].includes(runner.list()[0]?.status), 'the job to stop being unfinished', 20000);
   const done = runner.list()[0];
-  assert.equal(done.runs[0].status, 'error');
-  assert.match(done.runs[0].error, /no record of it any more/);
+  assert.equal(done.runs[0].status, 'done', 'the forgotten run was re-sent, not failed');
+  assert.equal(comfy.state.prompts.length, 1, 'the prompt was submitted again');
+  assert.equal(comfy.state.prompts[0].payload['37'].inputs.seed, 5, 'the same original seed, not a fresh roll');
   assert.equal(done.spec.seed, 5, 'the pinned seed survived the restart');
-  assert.equal(comfy.state.prompts.length, 0, 'nothing was submitted to a ComfyUI that forgot it');
 });
 
 test('a prompt ComfyUI still has is re-attached, not submitted twice', async (t) => {
